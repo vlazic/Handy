@@ -237,6 +237,31 @@ fn try_direct_typing_linux(text: &str, preferred_tool: TypingTool) -> Result<boo
     Ok(false)
 }
 
+/// Whether the direct-typing tool this configuration resolves to is ydotool —
+/// the only tool that cannot type non-ASCII text. ydotool maps characters to
+/// raw US-layout uinput keycodes and aborts the rest of the string at the
+/// first unmappable character, so e.g. "funkcioniše" is silently cut to
+/// "funkcioni". Mirrors the selection order in [`try_direct_typing_linux`].
+#[cfg(target_os = "linux")]
+fn direct_typing_resolves_to_ydotool(preferred_tool: TypingTool) -> bool {
+    match preferred_tool {
+        TypingTool::Ydotool => true,
+        TypingTool::Auto => {
+            if !is_ydotool_available() {
+                return false;
+            }
+            if is_wayland() {
+                !(is_kde_wayland() && is_kwtype_available())
+                    && !(!is_kde_wayland() && is_wtype_available())
+                    && !is_dotool_available()
+            } else {
+                !is_xdotool_available()
+            }
+        }
+        _ => false,
+    }
+}
+
 /// Returns the list of available typing tools on this system.
 /// Always includes "auto" as the first entry.
 #[cfg(target_os = "linux")]
@@ -745,12 +770,30 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
             info!("PasteMethod::None selected - skipping paste action");
         }
         PasteMethod::Direct => {
-            paste_direct(
-                &text,
-                &app_handle,
-                #[cfg(target_os = "linux")]
-                settings.typing_tool,
-            )?;
+            #[cfg(target_os = "linux")]
+            {
+                // ydotool would silently truncate the text at the first
+                // non-ASCII character, so route such transcriptions through
+                // the clipboard: the full text survives, and only the Ctrl+V
+                // chord goes through ydotool.
+                if !text.is_ascii() && direct_typing_resolves_to_ydotool(settings.typing_tool) {
+                    info!(
+                        "Direct typing would use ydotool, which cannot type non-ASCII text; \
+                         pasting via clipboard instead"
+                    );
+                    paste_via_clipboard(
+                        &text,
+                        &app_handle,
+                        &PasteMethod::CtrlV,
+                        paste_delay_ms,
+                        paste_delay_after_ms,
+                    )?;
+                } else {
+                    paste_direct(&text, &app_handle, settings.typing_tool)?;
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            paste_direct(&text, &app_handle)?;
         }
         PasteMethod::CtrlV | PasteMethod::CtrlShiftV | PasteMethod::ShiftInsert => {
             // Debug-gated receipt-sequenced paste (#502): restore the clipboard
