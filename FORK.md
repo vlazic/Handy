@@ -36,9 +36,11 @@ upstream.
 ## Install (Linux, from source)
 
 ```bash
-git clone git@github.com:vlazic/Handy.git && cd Handy   # default branch: fork
+git clone https://github.com/vlazic/Handy.git && cd Handy   # default branch: fork
 bun install
-bun run tauri build -- --bundles deb
+bun run tauri build --bundles deb     # NOT `-- --bundles`: with bun the extra
+                                      # `--` forwards the flag to cargo, which
+                                      # rejects it
 sudo apt install ./src-tauri/target/release/bundle/deb/Handy_*_amd64.deb
 ```
 
@@ -46,6 +48,31 @@ The installed package needs no `LD_LIBRARY_PATH` (the binary carries an rpath
 to `/usr/lib/Handy` where the bundled inference libraries land). The raw
 `target/release/handy` binary cannot run standalone — install the deb. See
 [BUILD.md](./BUILD.md) for build prerequisites per distro.
+
+## GNOME Wayland setup (shortcuts + typing)
+
+On GNOME Wayland, upstream Handy's global shortcut only reaches XWayland
+windows, and its ydotool typing path needs a daemon nobody tells you about.
+The full working recipe:
+
+1. **Keyboard backend** — evdev, which sees keys compositor-independently and
+   gives real hold-to-talk push-to-talk:
+   ```bash
+   sudo usermod -aG input $USER    # then log out and back in
+   ```
+   In Handy: Settings → Advanced → enable Experimental → Keyboard
+   implementation → **HandyKeys**.
+2. **Typing daemon** — `ydotool` (the client) silently types nothing without
+   `ydotoold` (a separate package on Ubuntu). Install both and run the daemon
+   as a user service (`ExecStart=/usr/bin/ydotoold`,
+   `WantedBy=default.target`, `systemctl --user enable --now ydotoold`).
+   `/dev/uinput` access: a udev rule
+   `KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"`.
+   Non-ASCII text is handled by this fork's clipboard fallback; ydotool alone
+   would truncate it.
+3. **Overlay** — if your compositor lacks the layer-shell protocol (GNOME
+   does), set the recording overlay to **None**: as a regular window it can
+   steal focus and swallow the typed text.
 
 ## Branch model
 
