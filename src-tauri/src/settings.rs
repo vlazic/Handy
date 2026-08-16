@@ -526,7 +526,11 @@ fn default_autostart_enabled() -> bool {
 }
 
 fn default_update_checks_enabled() -> bool {
-    true
+    // Fork: off by default. The updater endpoint is repointed at vlazic/Handy
+    // (see tauri.conf.json), which publishes no releases — but defaulting off
+    // makes sure a fresh install can never be offered an upstream build that
+    // would silently replace the fork.
+    false
 }
 
 fn default_show_whats_new_on_update() -> bool {
