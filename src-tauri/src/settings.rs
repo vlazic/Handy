@@ -445,6 +445,11 @@ pub struct AppSettings {
     pub stt_providers: Vec<SttProvider>,
     #[serde(default = "default_stt_api_keys")]
     pub stt_api_keys: SecretMap,
+    /// Fork migration marker: a store written by upstream (or an older fork
+    /// build) carries `update_checks_enabled: true`; the first fork run turns
+    /// checks off once and sets this, so the user's own later choice sticks.
+    #[serde(default)]
+    pub fork_update_checks_migrated: bool,
     #[serde(default)]
     pub mute_while_recording: bool,
     #[serde(default)]
@@ -854,6 +859,19 @@ fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
 /// providers (and their empty API-key slots) added in newer versions into
 /// existing stores. Never touches a user's `models` list on an existing
 /// provider.
+/// One-time fork migration: installs upgraded from upstream carry a persisted
+/// `update_checks_enabled: true`, which would fire a doomed check against the
+/// fork's release-less endpoint on every launch. Turn it off once; the marker
+/// keeps a user's deliberate re-enable from being reverted.
+fn ensure_fork_update_checks_off(settings: &mut AppSettings) -> bool {
+    if settings.fork_update_checks_migrated {
+        return false;
+    }
+    settings.update_checks_enabled = false;
+    settings.fork_update_checks_migrated = true;
+    true
+}
+
 fn ensure_stt_defaults(settings: &mut AppSettings) -> bool {
     let mut changed = false;
     for provider in default_stt_providers() {
@@ -969,6 +987,9 @@ pub fn get_default_settings() -> AppSettings {
         post_process_selected_prompt_id: None,
         stt_providers: default_stt_providers(),
         stt_api_keys: default_stt_api_keys(),
+        // Fresh installs already default checks off; mark migrated so a
+        // user's later re-enable is never reverted.
+        fork_update_checks_migrated: true,
         mute_while_recording: false,
         append_trailing_space: false,
         app_language: default_app_language(),
@@ -1112,6 +1133,7 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
 
     let mut defaults_changed = ensure_post_process_defaults(&mut settings);
     defaults_changed |= ensure_stt_defaults(&mut settings);
+    defaults_changed |= ensure_fork_update_checks_off(&mut settings);
     if defaults_changed {
         store.set("settings", serde_json::to_value(&settings).unwrap());
     }

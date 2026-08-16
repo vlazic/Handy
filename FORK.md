@@ -23,37 +23,47 @@ upstream.
   ydotool and the transcription contains non-ASCII text (e.g. š, đ, č, ć, ž),
   paste routes through the clipboard + Ctrl+V instead of being silently
   truncated at the first unmappable character.
-- **Updater neutralized**: the update endpoint points at this repo (which
-  publishes no releases) and update checks default to off, so an installed
-  fork build can never be silently replaced by an upstream release.
+- **Updater neutralized**, in three layers: the updater **pubkey is the
+  fork's own** minisign key (upstream artifacts can never pass signature
+  verification — the hard guarantee; the private key + password live in the
+  maintainer's `pass` store under `API-keys/handy-fork-updater-key`), the
+  endpoint points at this repo (which publishes no releases), and update
+  checks default to off — with a one-time migration that also turns them off
+  on stores upgraded from upstream, so no install keeps firing doomed checks.
 - **Versioning**: `X.Y.Z+fork.N` — upstream version plus a fork suffix. The
   `+fork.N` build metadata sorts above upstream's `X.Y.Z` in Debian version
   ordering, so installing the fork `.deb` over an upstream install is a clean
   upgrade. On each upstream sync the base version follows upstream and `N`
-  resets to 1; fork-only releases between syncs increment `N`. (Note: Windows
+  resets to 1; fork-only builds between syncs increment `N`. (Note: Windows
   MSI rejects build metadata in versions — irrelevant for Linux builds.)
 
 ## Install (Linux, from source)
 
+Build prerequisites: the apt list in [BUILD.md](./BUILD.md) (Prerequisites →
+Linux). Then:
+
 ```bash
 git clone https://github.com/vlazic/Handy.git && cd Handy   # default branch: fork
 bun install
-bun run tauri build --bundles deb     # NOT `-- --bundles`: with bun the extra
-                                      # `--` forwards the flag to cargo, which
-                                      # rejects it
+bun run tauri build --bundles deb
 sudo apt install ./src-tauri/target/release/bundle/deb/Handy_*_amd64.deb
 ```
 
-The installed package needs no `LD_LIBRARY_PATH` (the binary carries an rpath
-to `/usr/lib/Handy` where the bundled inference libraries land). The raw
-`target/release/handy` binary cannot run standalone — install the deb. See
-[BUILD.md](./BUILD.md) for build prerequisites per distro.
+> **Build-command note**: BUILD.md's troubleshooting shows
+> `bun run tauri build -- --bundles deb`. With bun the extra `--` forwards
+> `--bundles` to cargo, which rejects it — use the form above, without `--`.
+> (BUILD.md is left as upstream wrote it to keep syncs conflict-free.)
+
+Install the deb rather than running `target/release/handy` directly — BUILD.md
+("Linux Install (from source)") explains why the raw binary cannot run
+standalone and why the installed package needs no `LD_LIBRARY_PATH`.
 
 ## GNOME Wayland setup (shortcuts + typing)
 
 On GNOME Wayland, upstream Handy's global shortcut only reaches XWayland
 windows, and its ydotool typing path needs a daemon nobody tells you about.
-The full working recipe:
+The working recipe — the fork-specific parts in full, with README pointers for
+the rest:
 
 1. **Keyboard backend** — evdev, which sees keys compositor-independently and
    gives real hold-to-talk push-to-talk:
@@ -61,7 +71,8 @@ The full working recipe:
    sudo usermod -aG input $USER    # then log out and back in
    ```
    In Handy: Settings → Advanced → enable Experimental → Keyboard
-   implementation → **HandyKeys**.
+   implementation → **HandyKeys**. (The input-group step also appears in
+   README → Known Issues → Linux Notes.)
 2. **Typing daemon** — `ydotool` (the client) silently types nothing without
    `ydotoold` (a separate package on Ubuntu). Install both and run the daemon
    as a user service (`ExecStart=/usr/bin/ydotoold`,
@@ -72,7 +83,9 @@ The full working recipe:
    would truncate it.
 3. **Overlay** — if your compositor lacks the layer-shell protocol (GNOME
    does), set the recording overlay to **None**: as a regular window it can
-   steal focus and swallow the typed text.
+   steal focus and swallow the typed text. (Related startup issues:
+   README → Troubleshooting → Linux Startup Crashes,
+   `HANDY_NO_GTK_LAYER_SHELL=1`.)
 
 ## Branch model
 
