@@ -247,6 +247,10 @@ export const ModelsSettings: React.FC = () => {
         </p>
       </div>
 
+      {/* Cloud transcription providers — enabled models appear below as
+          regular selector entries */}
+      <CloudSttSettings />
+
       {/* Search bar — filter the catalog by name or description */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text/40 pointer-events-none" />
@@ -448,10 +452,6 @@ export const ModelsSettings: React.FC = () => {
             {t("settings.models.noModelsMatch")}
           </div>
         )}
-
-        {/* Cloud transcription providers — enabled models appear above as
-            regular selector entries */}
-        <CloudSttSettings />
       </div>
     </div>
   );
