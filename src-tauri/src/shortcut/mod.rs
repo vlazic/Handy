@@ -1216,6 +1216,111 @@ pub async fn fetch_post_process_models(
     crate::llm_client::fetch_models(provider, api_key).await
 }
 
+/// Validate that a cloud STT provider id exists in settings.
+fn validate_stt_provider_exists(
+    settings: &settings::AppSettings,
+    provider_id: &str,
+) -> Result<(), String> {
+    if settings.stt_provider(provider_id).is_none() {
+        return Err(format!("Provider '{}' not found", provider_id));
+    }
+    Ok(())
+}
+
+/// Cloud STT settings changes affect which virtual models exist, so notify the
+/// frontend's model store to reload its list.
+fn emit_models_updated(app: &AppHandle) {
+    let _ = app.emit("models-updated", ());
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_stt_api_key_setting(
+    app: AppHandle,
+    provider_id: String,
+    api_key: String,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    validate_stt_provider_exists(&settings, &provider_id)?;
+    settings.stt_api_keys.insert(provider_id, api_key);
+    settings::write_settings(&app, settings);
+    emit_models_updated(&app);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_stt_base_url_setting(
+    app: AppHandle,
+    provider_id: String,
+    base_url: String,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    let provider = settings
+        .stt_provider_mut(&provider_id)
+        .ok_or_else(|| format!("Provider '{}' not found", provider_id))?;
+
+    if !provider.allow_base_url_edit {
+        return Err(format!(
+            "Provider '{}' does not allow editing the base URL",
+            provider.label
+        ));
+    }
+
+    provider.base_url = base_url;
+    settings::write_settings(&app, settings);
+    emit_models_updated(&app);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn update_stt_provider_models(
+    app: AppHandle,
+    provider_id: String,
+    models: Vec<String>,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    let provider = settings
+        .stt_provider_mut(&provider_id)
+        .ok_or_else(|| format!("Provider '{}' not found", provider_id))?;
+
+    provider.models = models
+        .into_iter()
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty())
+        .collect();
+    settings::write_settings(&app, settings);
+    emit_models_updated(&app);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn fetch_stt_models(app: AppHandle, provider_id: String) -> Result<Vec<String>, String> {
+    let settings = settings::get_settings(&app);
+    let provider = settings
+        .stt_provider(&provider_id)
+        .ok_or_else(|| format!("Provider '{}' not found", provider_id))?;
+
+    let api_key = settings
+        .stt_api_keys
+        .get(&provider_id)
+        .cloned()
+        .unwrap_or_default();
+
+    // Keyless is fine for local OpenAI-compatible servers (custom provider),
+    // but hosted providers need a key to list models.
+    if api_key.trim().is_empty() && !provider.allow_base_url_edit {
+        return Err(format!(
+            "API key is required for {}. Please add an API key to list available models.",
+            provider.label
+        ));
+    }
+
+    crate::stt_client::fetch_stt_models(provider, api_key).await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn set_post_process_selected_prompt(app: AppHandle, id: String) -> Result<(), String> {

@@ -106,6 +106,20 @@ pub struct PostProcessProvider {
     pub supports_structured_output: bool,
 }
 
+/// An external OpenAI-compatible speech-to-text provider (e.g. Groq). Each
+/// enabled model becomes one virtual entry in the model selector.
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct SttProvider {
+    pub id: String,
+    pub label: String,
+    pub base_url: String,
+    #[serde(default)]
+    pub allow_base_url_edit: bool,
+    /// Model names enabled for this provider; each becomes one selector entry.
+    #[serde(default)]
+    pub models: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "lowercase")]
 pub enum OverlayPosition {
@@ -427,6 +441,10 @@ pub struct AppSettings {
     pub post_process_prompts: Vec<LLMPrompt>,
     #[serde(default)]
     pub post_process_selected_prompt_id: Option<String>,
+    #[serde(default = "default_stt_providers")]
+    pub stt_providers: Vec<SttProvider>,
+    #[serde(default = "default_stt_api_keys")]
+    pub stt_api_keys: SecretMap,
     #[serde(default)]
     pub mute_while_recording: bool,
     #[serde(default)]
@@ -725,6 +743,37 @@ fn default_post_process_models() -> HashMap<String, String> {
     map
 }
 
+fn default_stt_providers() -> Vec<SttProvider> {
+    vec![
+        SttProvider {
+            id: "groq".to_string(),
+            label: "Groq".to_string(),
+            base_url: "https://api.groq.com/openai/v1".to_string(),
+            allow_base_url_edit: false,
+            models: vec![
+                "whisper-large-v3".to_string(),
+                "whisper-large-v3-turbo".to_string(),
+            ],
+        },
+        // Custom provider always comes last (any OpenAI-compatible server).
+        SttProvider {
+            id: "custom".to_string(),
+            label: "Custom".to_string(),
+            base_url: "http://localhost:8000/v1".to_string(),
+            allow_base_url_edit: true,
+            models: Vec::new(),
+        },
+    ]
+}
+
+fn default_stt_api_keys() -> SecretMap {
+    let mut map = HashMap::new();
+    for provider in default_stt_providers() {
+        map.insert(provider.id, String::new());
+    }
+    SecretMap(map)
+}
+
 fn default_post_process_prompts() -> Vec<LLMPrompt> {
     vec![LLMPrompt {
         id: "default_improve_transcriptions".to_string(),
@@ -791,6 +840,29 @@ fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
                     .insert(provider.id.clone(), default_model);
                 changed = true;
             }
+        }
+    }
+
+    changed
+}
+
+/// Idempotent forward-migration for the cloud STT provider settings: injects
+/// providers (and their empty API-key slots) added in newer versions into
+/// existing stores. Never touches a user's `models` list on an existing
+/// provider.
+fn ensure_stt_defaults(settings: &mut AppSettings) -> bool {
+    let mut changed = false;
+    for provider in default_stt_providers() {
+        if !settings.stt_providers.iter().any(|p| p.id == provider.id) {
+            settings.stt_providers.push(provider.clone());
+            changed = true;
+        }
+
+        if !settings.stt_api_keys.contains_key(&provider.id) {
+            settings
+                .stt_api_keys
+                .insert(provider.id.clone(), String::new());
+            changed = true;
         }
     }
 
@@ -891,6 +963,8 @@ pub fn get_default_settings() -> AppSettings {
         post_process_models: default_post_process_models(),
         post_process_prompts: default_post_process_prompts(),
         post_process_selected_prompt_id: None,
+        stt_providers: default_stt_providers(),
+        stt_api_keys: default_stt_api_keys(),
         mute_while_recording: false,
         append_trailing_space: false,
         app_language: default_app_language(),
@@ -941,6 +1015,32 @@ impl AppSettings {
         self.post_process_providers
             .iter_mut()
             .find(|provider| provider.id == provider_id)
+    }
+
+    pub fn stt_provider(&self, provider_id: &str) -> Option<&SttProvider> {
+        self.stt_providers
+            .iter()
+            .find(|provider| provider.id == provider_id)
+    }
+
+    pub fn stt_provider_mut(&mut self, provider_id: &str) -> Option<&mut SttProvider> {
+        self.stt_providers
+            .iter_mut()
+            .find(|provider| provider.id == provider_id)
+    }
+
+    /// Whether a cloud STT provider is configured well enough for its models to
+    /// be offered in the model selector: it needs enabled models, a base URL,
+    /// and either an API key or an editable base URL (keyless local servers).
+    pub fn stt_provider_is_visible(&self, provider: &SttProvider) -> bool {
+        let has_key = self
+            .stt_api_keys
+            .get(&provider.id)
+            .map(|key| !key.trim().is_empty())
+            .unwrap_or(false);
+        !provider.models.is_empty()
+            && !provider.base_url.trim().is_empty()
+            && (has_key || provider.allow_base_url_edit)
     }
 }
 
@@ -994,7 +1094,9 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
         default_settings
     };
 
-    if ensure_post_process_defaults(&mut settings) {
+    let mut defaults_changed = ensure_post_process_defaults(&mut settings);
+    defaults_changed |= ensure_stt_defaults(&mut settings);
+    if defaults_changed {
         store.set("settings", serde_json::to_value(&settings).unwrap());
     }
 

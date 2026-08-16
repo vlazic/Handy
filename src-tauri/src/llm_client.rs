@@ -187,7 +187,7 @@ fn create_client(provider: &PostProcessProvider, api_key: &str) -> Result<reqwes
 /// summary. Nested causes contain the useful transport details, such as a
 /// certificate validation failure, an HTTP/2 error, or a connection reset.
 /// Callers must skip source types whose Display text can quote payload data.
-fn error_source_chain(error: &(dyn StdError + 'static)) -> Vec<String> {
+pub(crate) fn error_source_chain(error: &(dyn StdError + 'static)) -> Vec<String> {
     let mut causes = Vec::new();
     let mut source = error.source();
 
@@ -241,7 +241,7 @@ fn reqwest_error_kinds(error: &reqwest::Error) -> String {
     }
 }
 
-fn sanitized_url(url: &reqwest::Url) -> String {
+pub(crate) fn sanitized_url(url: &reqwest::Url) -> String {
     let mut url = url.clone();
 
     // Custom endpoints should not contain credentials or query-string tokens,
@@ -254,7 +254,7 @@ fn sanitized_url(url: &reqwest::Url) -> String {
     url.to_string()
 }
 
-fn sanitized_url_for_log(url: &str) -> String {
+pub(crate) fn sanitized_url_for_log(url: &str) -> String {
     reqwest::Url::parse(url)
         .map(|url| sanitized_url(&url))
         // Do not echo an invalid URL: the parse failure might have been caused
@@ -262,7 +262,7 @@ fn sanitized_url_for_log(url: &str) -> String {
         .unwrap_or_else(|_| "<invalid URL>".to_string())
 }
 
-fn report_reqwest_error(context: &str, error: &reqwest::Error) -> String {
+pub(crate) fn report_reqwest_error(context: &str, error: &reqwest::Error) -> String {
     let kinds = reqwest_error_kinds(error);
     let url = error
         .url()

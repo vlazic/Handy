@@ -503,6 +503,32 @@ impl TranscriptionManager {
             .get_model_info(model_id)
             .ok_or_else(|| anyhow::anyhow!("Model not found: {}", model_id))?;
 
+        // Cloud models hold no local engine: drop whatever is loaded, mark the
+        // model active, and report ready. The actual HTTP call happens per
+        // transcription in `transcribe_async`.
+        if model_info.engine_type == EngineType::Cloud {
+            {
+                let mut engine = self.lock_engine();
+                *engine = None;
+            }
+            {
+                let mut current_model = self.current_model_id.lock().unwrap();
+                *current_model = Some(model_id.to_string());
+            }
+            self.touch_activity();
+            let _ = self.app_handle.emit(
+                "model-state-changed",
+                ModelStateEvent {
+                    event_type: "loading_completed".to_string(),
+                    model_id: Some(model_id.to_string()),
+                    model_name: Some(model_info.name.clone()),
+                    error: None,
+                },
+            );
+            debug!("Cloud model '{}' marked active (no local engine)", model_id);
+            return Ok(());
+        }
+
         if !model_info.is_downloaded {
             let error_msg = "Model not downloaded";
             let _ = self.app_handle.emit(
@@ -1147,12 +1173,150 @@ impl TranscriptionManager {
         .emit(&self.app_handle);
     }
 
+    /// Async transcription entry point: routes cloud models to their HTTP API
+    /// and local engines through `spawn_blocking` so blocking inference never
+    /// runs on a tokio worker thread.
+    pub async fn transcribe_async(&self, audio: Vec<f32>) -> Result<String> {
+        let settings = get_settings(&self.app_handle);
+        let active_model = self
+            .get_current_model()
+            .unwrap_or_else(|| settings.selected_model.clone());
+
+        if crate::managers::model::remote::parse_cloud_model_id(&active_model).is_some() {
+            return self.transcribe_cloud(&settings, &active_model, audio).await;
+        }
+
+        let tm = self.clone();
+        tauri::async_runtime::spawn_blocking(move || tm.transcribe(audio))
+            .await
+            .map_err(|e| anyhow::anyhow!("Transcription task panicked: {e}"))?
+    }
+
+    /// Transcribe via an external OpenAI-compatible STT provider.
+    async fn transcribe_cloud(
+        &self,
+        settings: &AppSettings,
+        active_model: &str,
+        audio: Vec<f32>,
+    ) -> Result<String> {
+        let (provider_id, model) =
+            crate::managers::model::remote::parse_cloud_model_id(active_model)
+                .ok_or_else(|| anyhow::anyhow!("Invalid cloud model id: {}", active_model))?;
+
+        self.touch_activity();
+
+        if audio.is_empty() {
+            debug!("Empty audio vector");
+            return Ok(String::new());
+        }
+
+        let provider = settings.stt_provider(provider_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Cloud transcription provider '{}' is not configured",
+                provider_id
+            )
+        })?;
+        let api_key = settings
+            .stt_api_keys
+            .get(provider_id)
+            .cloned()
+            .unwrap_or_default();
+        if api_key.trim().is_empty() && !provider.allow_base_url_edit {
+            return Err(anyhow::anyhow!(
+                "API key for {} is not set. Add it in Settings → Models → Cloud transcription.",
+                provider.label
+            ));
+        }
+
+        // Resolve the persisted language intent for this model, then normalize
+        // to the bare ISO-639-1 code OpenAI-compatible APIs expect.
+        let validated_language =
+            effective_language_for_model(settings, self.model_manager.as_ref(), active_model);
+        let language: Option<String> = match validated_language.as_str() {
+            "" | "auto" => None,
+            lang => Some(base_language_code(normalize_cjk_language(lang)).to_string()),
+        };
+
+        // Hand custom words to the model as a prompt, mirroring the whisper
+        // initial-prompt path for local models.
+        let prompt = (!settings.custom_words.is_empty()).then(|| settings.custom_words.join(", "));
+
+        let st = std::time::Instant::now();
+        let audio_len = audio.len();
+
+        let text = crate::stt_client::transcribe_audio(
+            crate::stt_client::SttTranscribeRequest {
+                base_url: &provider.base_url,
+                provider_label: &provider.label,
+                api_key: &api_key,
+                model,
+                language: language.as_deref(),
+                prompt: prompt.as_deref(),
+            },
+            &audio,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+        // Same post-run text pipeline as local engines. Custom words were
+        // already passed as the prompt, so fuzzy correction is skipped —
+        // matching the local whisper-family behavior.
+        let model_languages = self
+            .model_manager
+            .get_model_info(active_model)
+            .map(|info| info.supported_languages)
+            .unwrap_or_default();
+        let output_language = resolve_output_language_evidence(
+            settings,
+            language.as_deref(),
+            &model_languages,
+            false,
+        );
+        debug!("Output language evidence: {:?}", output_language);
+        let filtered = post_process_transcription_text(
+            text,
+            settings,
+            true,
+            &output_language,
+            &model_languages,
+        );
+
+        let elapsed_secs = st.elapsed().as_secs_f64();
+        let audio_secs = audio_len as f64 / 16_000.0;
+        info!(
+            "Cloud transcription ({}) completed in {:.2}s for {:.2}s of audio ({:.2}x real-time)",
+            provider.label,
+            elapsed_secs,
+            audio_secs,
+            real_time_factor(audio_secs, elapsed_secs)
+        );
+
+        if filtered.is_empty() {
+            info!("Transcription result is empty");
+        } else {
+            info!("Transcription result: {}", filtered);
+        }
+
+        Ok(filtered)
+    }
+
     pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
         #[cfg(debug_assertions)]
         if std::env::var("HANDY_FORCE_TRANSCRIPTION_FAILURE").is_ok() {
             return Err(anyhow::anyhow!(
                 "Simulated transcription failure (HANDY_FORCE_TRANSCRIPTION_FAILURE)"
             ));
+        }
+
+        // Cloud models must go through `transcribe_async`; there is no local
+        // engine to run here.
+        if let Some(active) = self.get_current_model() {
+            if active.starts_with(crate::managers::model::remote::CLOUD_MODEL_PREFIX) {
+                return Err(anyhow::anyhow!(
+                    "Cloud model '{}' requires the async transcription path",
+                    active
+                ));
+            }
         }
 
         // Update last activity timestamp

@@ -83,10 +83,11 @@ pub async fn retry_history_entry_transcription(
 
     transcription_manager.initiate_model_load();
 
-    let tm = Arc::clone(&transcription_manager);
-    let transcription = tauri::async_runtime::spawn_blocking(move || tm.transcribe(samples))
+    // `transcribe_async` routes cloud models over HTTP and wraps local
+    // inference in spawn_blocking itself.
+    let transcription = transcription_manager
+        .transcribe_async(samples)
         .await
-        .map_err(|e| format!("Transcription task panicked: {}", e))?
         .map_err(|e| e.to_string())?;
 
     if transcription.is_empty() {

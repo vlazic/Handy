@@ -20,6 +20,7 @@ mod secure_input;
 mod settings;
 mod shortcut;
 mod signal_handle;
+mod stt_client;
 mod transcription_coordinator;
 mod tray;
 mod tray_i18n;
@@ -539,7 +540,10 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
             }
         }
         let t = Instant::now();
-        match tm.transcribe(samples.clone()) {
+        // block_on is safe here: this runs on the main thread during CLI
+        // handling, outside any tokio worker. `transcribe_async` also covers
+        // cloud models, which have no local engine.
+        match tauri::async_runtime::block_on(tm.transcribe_async(samples.clone())) {
             Ok(out) => text = out,
             Err(e) => {
                 eprintln!("error: transcribe failed: {}", e);
@@ -652,6 +656,10 @@ pub fn run(cli_args: CliArgs) {
             shortcut::update_post_process_prompt,
             shortcut::delete_post_process_prompt,
             shortcut::set_post_process_selected_prompt,
+            shortcut::change_stt_api_key_setting,
+            shortcut::change_stt_base_url_setting,
+            shortcut::update_stt_provider_models,
+            shortcut::fetch_stt_models,
             shortcut::update_custom_words,
             shortcut::suspend_all_bindings,
             shortcut::resume_all_bindings,

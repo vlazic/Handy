@@ -18,6 +18,7 @@ interface SettingsStore {
   outputDevices: AudioDevice[];
   customSounds: { start: boolean; stop: boolean };
   postProcessModelOptions: Record<string, string[]>;
+  sttModelOptions: Record<string, string[]>;
 
   // Actions
   initialize: () => Promise<void>;
@@ -53,6 +54,14 @@ interface SettingsStore {
   updatePostProcessModel: (providerId: string, model: string) => Promise<void>;
   fetchPostProcessModels: (providerId: string) => Promise<string[]>;
   setPostProcessModelOptions: (providerId: string, models: string[]) => void;
+  updateSttApiKey: (providerId: string, apiKey: string) => Promise<void>;
+  updateSttBaseUrl: (providerId: string, baseUrl: string) => Promise<void>;
+  updateSttProviderModels: (
+    providerId: string,
+    models: string[],
+  ) => Promise<void>;
+  fetchSttModels: (providerId: string) => Promise<string[]>;
+  setSttModelOptions: (providerId: string, models: string[]) => void;
 
   // Internal state setters
   setSettings: (settings: Settings | null) => void;
@@ -188,6 +197,7 @@ export const useSettingsStore = create<SettingsStore>()(
     outputDevices: [],
     customSounds: { start: false, stop: false },
     postProcessModelOptions: {},
+    sttModelOptions: {},
 
     // Internal setters
     setSettings: (settings) => set({ settings }),
@@ -575,6 +585,109 @@ export const useSettingsStore = create<SettingsStore>()(
       set((state) => ({
         postProcessModelOptions: {
           ...state.postProcessModelOptions,
+          [providerId]: models,
+        },
+      })),
+
+    updateSttApiKey: async (providerId, apiKey) => {
+      const { setUpdating, refreshSettings, setSttModelOptions } = get();
+      const updateKey = `stt_api_key:${providerId}`;
+
+      // Clear cached model suggestions when the key changes.
+      setSttModelOptions(providerId, []);
+      setUpdating(updateKey, true);
+
+      try {
+        const result = await commands.changeSttApiKeySetting(
+          providerId,
+          apiKey,
+        );
+        if (result.status === "error") {
+          console.error("Failed to update STT API key:", result.error);
+          return;
+        }
+        await refreshSettings();
+      } catch (error) {
+        console.error("Failed to update STT API key:", error);
+      } finally {
+        setUpdating(updateKey, false);
+      }
+    },
+
+    updateSttBaseUrl: async (providerId, baseUrl) => {
+      const { setUpdating, refreshSettings, setSttModelOptions } = get();
+      const updateKey = `stt_base_url:${providerId}`;
+
+      setSttModelOptions(providerId, []);
+      setUpdating(updateKey, true);
+
+      try {
+        const result = await commands.changeSttBaseUrlSetting(
+          providerId,
+          baseUrl,
+        );
+        if (result.status === "error") {
+          console.error("Failed to update STT base URL:", result.error);
+          return;
+        }
+        await refreshSettings();
+      } catch (error) {
+        console.error("Failed to update STT base URL:", error);
+      } finally {
+        setUpdating(updateKey, false);
+      }
+    },
+
+    updateSttProviderModels: async (providerId, models) => {
+      const { setUpdating, refreshSettings } = get();
+      const updateKey = `stt_models:${providerId}`;
+
+      setUpdating(updateKey, true);
+
+      try {
+        const result = await commands.updateSttProviderModels(
+          providerId,
+          models,
+        );
+        if (result.status === "error") {
+          console.error("Failed to update STT models:", result.error);
+          return;
+        }
+        await refreshSettings();
+      } catch (error) {
+        console.error("Failed to update STT models:", error);
+      } finally {
+        setUpdating(updateKey, false);
+      }
+    },
+
+    fetchSttModels: async (providerId) => {
+      const updateKey = `stt_models_fetch:${providerId}`;
+      const { setUpdating, setSttModelOptions } = get();
+
+      setUpdating(updateKey, true);
+
+      try {
+        const result = await commands.fetchSttModels(providerId);
+        if (result.status === "ok") {
+          setSttModelOptions(providerId, result.data);
+          return result.data;
+        }
+        console.error("Failed to fetch STT models:", result.error);
+        return [];
+      } catch (error) {
+        console.error("Failed to fetch STT models:", error);
+        // Don't cache empty array on error - let user retry
+        return [];
+      } finally {
+        setUpdating(updateKey, false);
+      }
+    },
+
+    setSttModelOptions: (providerId, models) =>
+      set((state) => ({
+        sttModelOptions: {
+          ...state.sttModelOptions,
           [providerId]: models,
         },
       })),

@@ -26,6 +26,7 @@
     "showFewerModels": "显示较少模型",
     "recommended": "推荐",
     "customModelDescription": "非官方支持",
+    "cloudModelDescription": "Transcribes via a cloud API. Audio leaves this device.",
     "modelCard": {
       "accuracy": "准确度",
       "speed": "速度"
@@ -123,6 +124,7 @@
   "modelSelector": {
     "custom": "自定义",
     "streaming": "流式",
+    "cloud": "Cloud",
     "active": "活跃",
     "switching": "切换中...",
     "noModelsAvailable": "没有可用的模型",
@@ -176,6 +178,31 @@
       "rescan": {
         "label": "重新扫描",
         "tooltip": "重新扫描在 Handy 之外添加到模型文件夹或 Hugging Face 缓存中的模型"
+      },
+      "cloud": {
+        "title": "Cloud transcription",
+        "provider": {
+          "title": "Provider",
+          "description": "OpenAI-compatible speech-to-text service. Enabled models appear in the model selector once the provider is configured. Audio is sent to the provider; API keys are stored locally in plain text."
+        },
+        "baseUrl": {
+          "title": "Base URL",
+          "description": "Endpoint of a custom OpenAI-compatible server (e.g. a local Whisper server).",
+          "placeholder": "http://localhost:8000/v1"
+        },
+        "apiKey": {
+          "title": "API Key",
+          "description": "Stored locally and sent only to this provider. Leave empty for keyless local servers.",
+          "placeholder": "Enter API key"
+        },
+        "models": {
+          "title": "Enabled models",
+          "description": "Each enabled model becomes an entry in the model selector. Fetch the provider's list or type a model name."
+        },
+        "addModelPlaceholder": "Add a model...",
+        "addModelCreateLabel": "Use \"{{input}}\"",
+        "fetchModels": "Fetch available models",
+        "removeModel": "Remove {{model}}"
       }
     },
     "general": {

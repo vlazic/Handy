@@ -18,6 +18,7 @@ import {
   supportsLanguageCode,
 } from "@/lib/constants/languages.ts";
 import type { ModelInfo } from "@/bindings";
+import { CloudSttSettings } from "./CloudSttSettings";
 
 // check if model supports a language based on its supported_languages list
 const modelSupportsLanguage = (model: ModelInfo, langCode: string): boolean => {
@@ -447,6 +448,10 @@ export const ModelsSettings: React.FC = () => {
             {t("settings.models.noModelsMatch")}
           </div>
         )}
+
+        {/* Cloud transcription providers — enabled models appear above as
+            regular selector entries */}
+        <CloudSttSettings />
       </div>
     </div>
   );

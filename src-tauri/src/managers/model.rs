@@ -20,10 +20,11 @@ use tar::Archive;
 use tauri::{AppHandle, Emitter, Manager};
 
 mod download;
+pub mod remote;
 
 use download::{HttpDownloadOutcome, DOWNLOAD_STALL_TIMEOUT};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub enum EngineType {
     /// Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
     /// Voxtral, Qwen3-ASR, Nemotron, …). The architecture is auto-detected from
@@ -36,6 +37,9 @@ pub enum EngineType {
     GigaAM,
     Canary,
     Cohere,
+    /// External OpenAI-compatible STT API (e.g. Groq). No local engine; audio
+    /// is sent over HTTP by `stt_client`.
+    Cloud,
 }
 
 /// Where a model comes from and how Handy obtains it — the routing discriminant
@@ -55,6 +59,9 @@ pub enum ModelSource {
     /// Already present on disk — a user-provided custom model, or one discovered
     /// in a shared cache. Nothing to download.
     Local,
+    /// A virtual entry backed by an external STT provider (see
+    /// [`remote::remote_model_infos`]). Nothing on disk, nothing to download.
+    Cloud { provider_id: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -100,6 +107,23 @@ fn base_language(language: &str) -> &str {
         Some((base, _)) => base,
         None => language,
     }
+}
+
+/// Whisper supported languages (99 languages from tokenizer). Shared between
+/// the legacy model table and virtual cloud entries.
+pub(crate) fn whisper_languages() -> Vec<String> {
+    vec![
+        "en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl", "ca", "nl", "ar", "sv",
+        "it", "id", "hi", "fi", "vi", "he", "uk", "el", "ms", "cs", "ro", "da", "hu", "ta", "no",
+        "th", "ur", "hr", "bg", "lt", "la", "mi", "ml", "cy", "sk", "te", "fa", "lv", "bn", "sr",
+        "az", "sl", "kn", "et", "mk", "br", "eu", "is", "hy", "ne", "mn", "bs", "kk", "sq", "sw",
+        "gl", "mr", "pa", "si", "km", "sn", "yo", "so", "af", "oc", "ka", "be", "tg", "sd", "gu",
+        "am", "yi", "lo", "uz", "fo", "ht", "ps", "tk", "nn", "mt", "sa", "lb", "my", "bo", "tl",
+        "mg", "as", "tt", "haw", "ln", "ha", "ba", "jw", "su", "yue",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
 }
 
 fn canonicalize_supported_languages(languages: Vec<String>) -> Vec<String> {
@@ -526,20 +550,7 @@ impl ModelManager {
 
         let mut available_models = HashMap::new();
 
-        // Whisper supported languages (99 languages from tokenizer)
-        let whisper_languages: Vec<String> = vec![
-            "en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl", "ca", "nl", "ar",
-            "sv", "it", "id", "hi", "fi", "vi", "he", "uk", "el", "ms", "cs", "ro", "da", "hu",
-            "ta", "no", "th", "ur", "hr", "bg", "lt", "la", "mi", "ml", "cy", "sk", "te", "fa",
-            "lv", "bn", "sr", "az", "sl", "kn", "et", "mk", "br", "eu", "is", "hy", "ne", "mn",
-            "bs", "kk", "sq", "sw", "gl", "mr", "pa", "si", "km", "sn", "yo", "so", "af", "oc",
-            "ka", "be", "tg", "sd", "gu", "am", "yi", "lo", "uz", "fo", "ht", "ps", "tk", "nn",
-            "mt", "sa", "lb", "my", "bo", "tl", "mg", "as", "tt", "haw", "ln", "ha", "ba", "jw",
-            "su", "yue",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect();
+        let whisper_languages = whisper_languages();
 
         available_models.insert(
             "small".to_string(),
@@ -1149,6 +1160,8 @@ impl ModelManager {
             let models = self.available_models.lock().unwrap();
             models.values().cloned().collect()
         };
+        // Overlay the virtual cloud provider entries (never stored in the map).
+        list.extend(remote::remote_model_infos(&get_settings(&self.app_handle)));
         // Stable, reasonable order: catalog editorial rank first (lower = higher
         // priority), then any other recommended model, then by accuracy, speed,
         // and name. `ModelInfo` doesn't carry rank, so resolve it by id from the
@@ -1249,6 +1262,11 @@ impl ModelManager {
     }
 
     pub fn get_model_info(&self, model_id: &str) -> Option<ModelInfo> {
+        if model_id.starts_with(remote::CLOUD_MODEL_PREFIX) {
+            return remote::remote_model_infos(&get_settings(&self.app_handle))
+                .into_iter()
+                .find(|info| info.id == model_id);
+        }
         let models = self.available_models.lock().unwrap();
         models.get(model_id).cloned()
     }
@@ -2169,6 +2187,9 @@ impl ModelManager {
             ModelSource::Local => {
                 return Err(anyhow::anyhow!("No download source for model"));
             }
+            ModelSource::Cloud { .. } => {
+                return Err(anyhow::anyhow!("Cloud models are not downloadable"));
+            }
         };
         let model_path = self.models_dir.join(&model_info.filename);
         let partial_path = self
@@ -2471,6 +2492,13 @@ impl ModelManager {
     }
 
     pub fn get_model_path(&self, model_id: &str) -> Result<PathBuf> {
+        if model_id.starts_with(remote::CLOUD_MODEL_PREFIX) {
+            return Err(anyhow::anyhow!(
+                "Cloud model has no local path: {}",
+                model_id
+            ));
+        }
+
         let model_info = self
             .get_model_info(model_id)
             .ok_or_else(|| anyhow::anyhow!("Model not found: {}", model_id))?;

@@ -26,6 +26,7 @@
     "showFewerModels": "Minder modellen tonen",
     "recommended": "Aanbevolen",
     "customModelDescription": "Niet officieel ondersteund",
+    "cloudModelDescription": "Transcribes via a cloud API. Audio leaves this device.",
     "modelCard": {
       "accuracy": "nauwkeurigheid",
       "speed": "snelheid"
@@ -124,6 +125,7 @@
     "custom": "Aangepast",
     "legacy": "Klassiek",
     "streaming": "Streaming",
+    "cloud": "Cloud",
     "active": "Actief",
     "switching": "Wisselen...",
     "noModelsAvailable": "Geen modellen beschikbaar",
@@ -217,7 +219,32 @@
         "label": "Opnieuw scannen",
         "tooltip": "Scannen naar modellen die buiten Handy om zijn toegevoegd aan de modellenmap of Hugging Face-cache"
       },
-      "noModelsMatch": "Geen modellen voldoen aan dit filter."
+      "noModelsMatch": "Geen modellen voldoen aan dit filter.",
+      "cloud": {
+        "title": "Cloud transcription",
+        "provider": {
+          "title": "Provider",
+          "description": "OpenAI-compatible speech-to-text service. Enabled models appear in the model selector once the provider is configured. Audio is sent to the provider; API keys are stored locally in plain text."
+        },
+        "baseUrl": {
+          "title": "Base URL",
+          "description": "Endpoint of a custom OpenAI-compatible server (e.g. a local Whisper server).",
+          "placeholder": "http://localhost:8000/v1"
+        },
+        "apiKey": {
+          "title": "API Key",
+          "description": "Stored locally and sent only to this provider. Leave empty for keyless local servers.",
+          "placeholder": "Enter API key"
+        },
+        "models": {
+          "title": "Enabled models",
+          "description": "Each enabled model becomes an entry in the model selector. Fetch the provider's list or type a model name."
+        },
+        "addModelPlaceholder": "Add a model...",
+        "addModelCreateLabel": "Use \"{{input}}\"",
+        "fetchModels": "Fetch available models",
+        "removeModel": "Remove {{model}}"
+      }
     },
     "sound": {
       "title": "Geluid",

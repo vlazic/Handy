@@ -27,6 +27,10 @@ export function getTranslatedModelDescription(
   if (model.is_custom) {
     return t("onboarding.customModelDescription");
   }
+  // Cloud provider models share one generic description
+  if (model.engine_type === "Cloud") {
+    return t("onboarding.cloudModelDescription");
+  }
   const translationKey = `onboarding.models.${model.id}.description`;
   const translated = t(translationKey, { defaultValue: "" });
   return translated !== "" ? translated : model.description;
