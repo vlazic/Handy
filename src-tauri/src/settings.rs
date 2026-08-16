@@ -853,15 +853,15 @@ fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
 fn ensure_stt_defaults(settings: &mut AppSettings) -> bool {
     let mut changed = false;
     for provider in default_stt_providers() {
-        if !settings.stt_providers.iter().any(|p| p.id == provider.id) {
-            settings.stt_providers.push(provider.clone());
-            changed = true;
-        }
-
         if !settings.stt_api_keys.contains_key(&provider.id) {
             settings
                 .stt_api_keys
                 .insert(provider.id.clone(), String::new());
+            changed = true;
+        }
+
+        if !settings.stt_providers.iter().any(|p| p.id == provider.id) {
+            settings.stt_providers.push(provider);
             changed = true;
         }
     }
@@ -1029,18 +1029,30 @@ impl AppSettings {
             .find(|provider| provider.id == provider_id)
     }
 
+    /// The configured API key for a cloud STT provider, empty string if unset.
+    pub fn stt_api_key(&self, provider_id: &str) -> String {
+        self.stt_api_keys
+            .get(provider_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Whether this cloud STT provider is missing a required API key. Keyless
+    /// use is allowed only for providers with an editable base URL (local
+    /// OpenAI-compatible servers); hosted presets always need a key. The single
+    /// source of this policy — visibility, transcription, and model fetching
+    /// all consult it.
+    pub fn stt_api_key_missing(&self, provider: &SttProvider) -> bool {
+        self.stt_api_key(&provider.id).trim().is_empty() && !provider.allow_base_url_edit
+    }
+
     /// Whether a cloud STT provider is configured well enough for its models to
     /// be offered in the model selector: it needs enabled models, a base URL,
-    /// and either an API key or an editable base URL (keyless local servers).
+    /// and an API key when one is required.
     pub fn stt_provider_is_visible(&self, provider: &SttProvider) -> bool {
-        let has_key = self
-            .stt_api_keys
-            .get(&provider.id)
-            .map(|key| !key.trim().is_empty())
-            .unwrap_or(false);
         !provider.models.is_empty()
             && !provider.base_url.trim().is_empty()
-            && (has_key || provider.allow_base_url_edit)
+            && !self.stt_api_key_missing(provider)
     }
 }
 

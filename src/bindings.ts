@@ -296,6 +296,38 @@ async setPostProcessSelectedPrompt(id: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async changeSttApiKeySetting(providerId: string, apiKey: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_stt_api_key_setting", { providerId, apiKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeSttBaseUrlSetting(providerId: string, baseUrl: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_stt_base_url_setting", { providerId, baseUrl }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async updateSttProviderModels(providerId: string, models: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_stt_provider_models", { providerId, models }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async fetchSttModels(providerId: string) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("fetch_stt_models", { providerId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async updateCustomWords(words: string[]) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("update_custom_words", { words }) };
@@ -889,10 +921,8 @@ async updateRecordingRetentionPeriod(period: string) : Promise<Result<null, stri
 }
 },
 /**
- * Checks if the Mac is a laptop by detecting battery presence
- * 
- * This uses pmset to check for battery information.
- * Returns true if a battery is detected (laptop), false otherwise (desktop)
+ * Stub implementation for non-macOS platforms
+ * Always returns false since laptop detection is macOS-specific
  */
 async isLaptop() : Promise<Result<boolean, string>> {
     try {
@@ -953,7 +983,7 @@ whats_new_last_seen_version?: string; selected_model?: string; onboarding_comple
  * Which input channel to use on the selected microphone device.
  * None means "average all channels" (original behavior).
  */
-selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; 
+selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; stt_providers?: SttProvider[]; stt_api_keys?: SecretMap; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; 
 /**
  * Debug-gated ("beta") receipt-sequenced paste: restore the clipboard only
  * after the target app actually reads the transcript, instead of after a
@@ -978,7 +1008,12 @@ export type EngineType =
  * Voxtral, Qwen3-ASR, Nemotron, …). The architecture is auto-detected from
  * the file, so this one variant covers the whole transcribe-cpp family.
  */
-"TranscribeCpp" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Canary" | "Cohere"
+"TranscribeCpp" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Canary" | "Cohere" | 
+/**
+ * External OpenAI-compatible STT API (e.g. Groq). No local engine; audio
+ * is sent over HTTP by `stt_client`.
+ */
+"Cloud"
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
@@ -1023,7 +1058,12 @@ sha256: string | null } } |
  * Already present on disk — a user-provided custom model, or one discovered
  * in a shared cache. Nothing to download.
  */
-"Local"
+"Local" | 
+/**
+ * A virtual entry backed by an external STT provider (see
+ * [`remote::remote_model_infos`]). Nothing on disk, nothing to download.
+ */
+{ Cloud: { provider_id: string } }
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
 export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
 export type OverlayPosition = "top" | "bottom"
@@ -1106,6 +1146,15 @@ export type StreamTextEvent = { committed: string; tentative: string }
  * Semantic kind of "working" phase, used to localize the spinner label.
  */
 export type StreamWorkKind = "transcribing" | "polishing"
+/**
+ * An external OpenAI-compatible speech-to-text provider (e.g. Groq). Each
+ * enabled model becomes one virtual entry in the model selector.
+ */
+export type SttProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; 
+/**
+ * Model names enabled for this provider; each becomes one selector entry.
+ */
+models?: string[] }
 /**
  * UI appearance mode. `System` follows the OS `prefers-color-scheme`; `Light`
  * and `Dark` force one of the two palettes Handy already ships.

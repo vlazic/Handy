@@ -111,19 +111,41 @@ fn base_language(language: &str) -> &str {
 
 /// Whisper supported languages (99 languages from tokenizer). Shared between
 /// the legacy model table and virtual cloud entries.
-pub(crate) fn whisper_languages() -> Vec<String> {
-    vec![
-        "en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl", "ca", "nl", "ar", "sv",
-        "it", "id", "hi", "fi", "vi", "he", "uk", "el", "ms", "cs", "ro", "da", "hu", "ta", "no",
-        "th", "ur", "hr", "bg", "lt", "la", "mi", "ml", "cy", "sk", "te", "fa", "lv", "bn", "sr",
-        "az", "sl", "kn", "et", "mk", "br", "eu", "is", "hy", "ne", "mn", "bs", "kk", "sq", "sw",
-        "gl", "mr", "pa", "si", "km", "sn", "yo", "so", "af", "oc", "ka", "be", "tg", "sd", "gu",
-        "am", "yi", "lo", "uz", "fo", "ht", "ps", "tk", "nn", "mt", "sa", "lb", "my", "bo", "tl",
-        "mg", "as", "tt", "haw", "ln", "ha", "ba", "jw", "su", "yue",
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect()
+pub(crate) fn whisper_languages() -> &'static [String] {
+    static LANGUAGES: std::sync::LazyLock<Vec<String>> = std::sync::LazyLock::new(|| {
+        vec![
+            "en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl", "ca", "nl", "ar",
+            "sv", "it", "id", "hi", "fi", "vi", "he", "uk", "el", "ms", "cs", "ro", "da", "hu",
+            "ta", "no", "th", "ur", "hr", "bg", "lt", "la", "mi", "ml", "cy", "sk", "te", "fa",
+            "lv", "bn", "sr", "az", "sl", "kn", "et", "mk", "br", "eu", "is", "hy", "ne", "mn",
+            "bs", "kk", "sq", "sw", "gl", "mr", "pa", "si", "km", "sn", "yo", "so", "af", "oc",
+            "ka", "be", "tg", "sd", "gu", "am", "yi", "lo", "uz", "fo", "ht", "ps", "tk", "nn",
+            "mt", "sa", "lb", "my", "bo", "tl", "mg", "as", "tt", "haw", "ln", "ha", "ba", "jw",
+            "su", "yue",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect()
+    });
+    &LANGUAGES
+}
+
+/// Turn a model id into a readable display name: `-`/`_` become spaces and
+/// words are capitalized (`whisper-large-v3-turbo` → "Whisper Large V3
+/// Turbo"). Shared by the on-disk custom-model scan and the virtual cloud
+/// entries.
+pub(crate) fn prettify_model_id(id: &str) -> String {
+    id.split(['-', '_', ' '])
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn canonicalize_supported_languages(languages: Vec<String>) -> Vec<String> {
@@ -550,7 +572,7 @@ impl ModelManager {
 
         let mut available_models = HashMap::new();
 
-        let whisper_languages = whisper_languages();
+        let whisper_languages = whisper_languages().to_vec();
 
         available_models.insert(
             "small".to_string(),
@@ -1263,9 +1285,7 @@ impl ModelManager {
 
     pub fn get_model_info(&self, model_id: &str) -> Option<ModelInfo> {
         if model_id.starts_with(remote::CLOUD_MODEL_PREFIX) {
-            return remote::remote_model_infos(&get_settings(&self.app_handle))
-                .into_iter()
-                .find(|info| info.id == model_id);
+            return remote::remote_model_info(&get_settings(&self.app_handle), model_id);
         }
         let models = self.available_models.lock().unwrap();
         models.get(model_id).cloned()
@@ -1498,11 +1518,20 @@ impl ModelManager {
         let mut settings = get_settings(&self.app_handle);
 
         // Clear stale selection: selected model is set but doesn't exist
-        // in available_models (e.g. deleted custom model file)
+        // in available_models (e.g. deleted custom model file). Cloud models
+        // never enter the registry map and are deliberately never cleared —
+        // an unconfigured provider surfaces as a clean transcription error
+        // rather than a silent switch to a different model.
         if !settings.selected_model.is_empty() {
-            let models = self.available_models.lock().unwrap();
-            let exists = models.contains_key(&settings.selected_model);
-            drop(models);
+            let exists = if settings
+                .selected_model
+                .starts_with(remote::CLOUD_MODEL_PREFIX)
+            {
+                true
+            } else {
+                let models = self.available_models.lock().unwrap();
+                models.contains_key(&settings.selected_model)
+            };
 
             if !exists {
                 info!(
@@ -1638,18 +1667,7 @@ impl ModelManager {
             }
 
             // Generate display name: replace - and _ with space, capitalize words
-            let fallback_display_name = model_id
-                .replace(['-', '_'], " ")
-                .split_whitespace()
-                .map(|word| {
-                    let mut chars = word.chars();
-                    match chars.next() {
-                        None => String::new(),
-                        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
+            let fallback_display_name = prettify_model_id(&model_id);
 
             // Get file size in MB
             let size_mb = match path.metadata() {
@@ -2492,16 +2510,16 @@ impl ModelManager {
     }
 
     pub fn get_model_path(&self, model_id: &str) -> Result<PathBuf> {
-        if model_id.starts_with(remote::CLOUD_MODEL_PREFIX) {
+        let model_info = self
+            .get_model_info(model_id)
+            .ok_or_else(|| anyhow::anyhow!("Model not found: {}", model_id))?;
+
+        if matches!(model_info.source, ModelSource::Cloud { .. }) {
             return Err(anyhow::anyhow!(
                 "Cloud model has no local path: {}",
                 model_id
             ));
         }
-
-        let model_info = self
-            .get_model_info(model_id)
-            .ok_or_else(|| anyhow::anyhow!("Model not found: {}", model_id))?;
 
         if !model_info.is_downloaded {
             return Err(anyhow::anyhow!("Model not available: {}", model_id));

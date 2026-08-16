@@ -183,7 +183,7 @@
         "title": "Cloud transcription",
         "provider": {
           "title": "Provider",
-          "description": "OpenAI-compatible speech-to-text service. Enabled models appear in the model selector once the provider is configured. Audio is sent to the provider; API keys are stored locally in plain text."
+          "description": "OpenAI-compatible speech-to-text service. Enabled models appear in the model selector once the provider is configured. Audio and your custom words list (sent as a transcription hint) go to the provider; API keys are stored locally in plain text."
         },
         "baseUrl": {
           "title": "Base URL",

@@ -1,15 +1,19 @@
 //! HTTP client for external OpenAI-compatible speech-to-text APIs (e.g. Groq's
-//! `/audio/transcriptions`). Mirrors the structure of `llm_client` and reuses
-//! its sanitized error reporting so URLs and payloads never leak into logs.
+//! `/audio/transcriptions`). Shares the app-identity headers, model-list
+//! parsing, and sanitized error reporting with `llm_client` so URLs and
+//! payloads never leak into logs.
 
 use log::debug;
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, REFERER, USER_AGENT};
 use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::audio_toolkit::wav_bytes_16k_mono;
-use crate::llm_client::{report_reqwest_error, sanitized_url, sanitized_url_for_log};
+use crate::llm_client::{
+    app_identity_headers, parse_openai_model_list, report_reqwest_error, sanitized_url,
+    sanitized_url_for_log,
+};
 use crate::settings::SttProvider;
 
 /// Bound the whole request: uploads of multi-minute recordings on slow uplinks
@@ -37,34 +41,29 @@ struct TranscriptionResponse {
     text: String,
 }
 
-fn build_headers(api_key: &str) -> Result<HeaderMap, String> {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        REFERER,
-        HeaderValue::from_static("https://github.com/cjpais/Handy"),
-    );
-    headers.insert(
-        USER_AGENT,
-        HeaderValue::from_static("Handy/1.0 (+https://github.com/cjpais/Handy)"),
-    );
-    if !api_key.is_empty() {
-        headers.insert(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", api_key))
-                .map_err(|e| format!("Invalid authorization header value: {}", e))?,
-        );
+/// Shared client so connections keep-alive across dictations — transcription
+/// sits on the latency path, and a fresh client would pay a TCP+TLS handshake
+/// per request. Auth is attached per request, not baked into the client.
+fn http_client() -> Result<&'static reqwest::Client, String> {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client);
     }
-    Ok(headers)
-}
-
-fn create_client(api_key: &str) -> Result<reqwest::Client, String> {
-    let headers = build_headers(api_key)?;
-    reqwest::Client::builder()
-        .default_headers(headers)
+    let client = reqwest::Client::builder()
+        .default_headers(app_identity_headers())
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(REQUEST_TIMEOUT)
         .build()
-        .map_err(|e| report_reqwest_error("Failed to build HTTP client", &e))
+        .map_err(|e| report_reqwest_error("Failed to build HTTP client", &e))?;
+    Ok(CLIENT.get_or_init(|| client))
+}
+
+fn with_auth(builder: reqwest::RequestBuilder, api_key: &str) -> reqwest::RequestBuilder {
+    if api_key.is_empty() {
+        builder
+    } else {
+        builder.bearer_auth(api_key)
+    }
 }
 
 /// Truncate an error body for display. Never logged verbatim beyond this: an
@@ -84,9 +83,13 @@ fn error_snippet(body: &str) -> &str {
 /// `/audio/transcriptions` endpoint and return the transcribed text.
 pub async fn transcribe_audio(
     req: SttTranscribeRequest<'_>,
-    samples: &[f32],
+    samples: Vec<f32>,
 ) -> Result<String, String> {
-    let wav = wav_bytes_16k_mono(samples)
+    // Encoding a multi-minute recording is real CPU work — keep it off the
+    // async executor thread.
+    let wav = tauri::async_runtime::spawn_blocking(move || wav_bytes_16k_mono(&samples))
+        .await
+        .map_err(|e| format!("WAV encoding task panicked: {}", e))?
         .map_err(|e| format!("Failed to encode audio for upload: {}", e))?;
 
     let base_url = req.base_url.trim_end_matches('/');
@@ -115,9 +118,7 @@ pub async fn transcribe_audio(
         form = form.text("prompt", prompt.to_string());
     }
 
-    let client = create_client(req.api_key)?;
-    let response = client
-        .post(&url)
+    let response = with_auth(http_client()?.post(&url), req.api_key)
         .multipart(form)
         .send()
         .await
@@ -160,9 +161,7 @@ pub async fn fetch_stt_models(
     let url = format!("{}/models", base_url);
     debug!("Fetching STT models from: {}", sanitized_url_for_log(&url));
 
-    let client = create_client(&api_key)?;
-    let response = client
-        .get(&url)
+    let response = with_auth(http_client()?.get(&url), &api_key)
         .send()
         .await
         .map_err(|e| report_reqwest_error("Failed to fetch models", &e))?;
@@ -182,41 +181,12 @@ pub async fn fetch_stt_models(
         .await
         .map_err(|e| report_reqwest_error("Failed to parse model list response", &e))?;
 
-    let mut models = Vec::new();
-    let mut any_modality_metadata = false;
-
-    // OpenAI format: { data: [ { id: "..." }, ... ] }
-    if let Some(data) = parsed.get("data").and_then(|d| d.as_array()) {
-        for entry in data {
-            let Some(id) = entry
-                .get("id")
-                .and_then(|i| i.as_str())
-                .or_else(|| entry.get("name").and_then(|n| n.as_str()))
-            else {
-                continue;
-            };
-            if let Some(modalities) = entry.get("output_modalities").and_then(|m| m.as_array()) {
-                any_modality_metadata = true;
-                if modalities.iter().any(|m| m.as_str() == Some("transcription")) {
-                    models.push(id.to_string());
-                }
-            } else {
-                models.push(id.to_string());
-            }
+    Ok(parse_openai_model_list(&parsed, |entry| {
+        match entry.get("output_modalities").and_then(|m| m.as_array()) {
+            Some(modalities) => modalities
+                .iter()
+                .any(|m| m.as_str() == Some("transcription")),
+            None => true,
         }
-    }
-    // Bare array format: [ "model1", "model2", ... ]
-    else if let Some(array) = parsed.as_array() {
-        for entry in array {
-            if let Some(model) = entry.as_str() {
-                models.push(model.to_string());
-            }
-        }
-    }
-
-    if any_modality_metadata {
-        debug!("Filtered model list to {} STT model(s)", models.len());
-    }
-
-    Ok(models)
+    }))
 }

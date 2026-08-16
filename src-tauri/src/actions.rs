@@ -723,9 +723,20 @@ impl ShortcutAction for TranscribeAction {
                         // transcription of the same audio. A finalize timeout is
                         // surfaced instead — the worker may still hold the engine,
                         // so a batch fallback would contend with it.
-                        Ok(Some(text)) if !text.trim().is_empty() => Ok(text),
-                        Ok(_) => tm.transcribe_async(samples).await,
-                        Err(err) => Err(err),
+                        Ok(Some(text)) if !text.trim().is_empty() => Some(Ok(text)),
+                        // Cloud requests can hang up to the HTTP timeout (120s),
+                        // so honor cancel mid-flight — dropping the future aborts
+                        // the request. Local inference is deliberately NOT
+                        // cancellable here: the engine must run to completion or
+                        // the next dictation would contend with it.
+                        Ok(_) if tm.active_model_is_cloud() => {
+                            complete_unless_cancelled(tm.transcribe_async(samples), || {
+                                rm.was_cancelled_since(cancel_generation)
+                            })
+                            .await
+                        }
+                        Ok(_) => Some(tm.transcribe_async(samples).await),
+                        Err(err) => Some(Err(err)),
                     };
 
                     // Await WAV save and verify
@@ -750,6 +761,14 @@ impl ShortcutAction for TranscribeAction {
                             error!("WAV save task panicked: {}", e);
                             false
                         }
+                    };
+
+                    // None = cancelled while a cloud request was in flight.
+                    let Some(transcription_result) = transcription_result else {
+                        debug!("Transcription operation cancelled during cloud request");
+                        utils::hide_recording_overlay(&ah);
+                        change_tray_icon(&ah, TrayIconState::Idle);
+                        return;
                     };
 
                     if rm.was_cancelled_since(cancel_generation) {

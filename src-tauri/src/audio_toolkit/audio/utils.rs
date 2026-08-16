@@ -27,8 +27,9 @@ pub fn verify_wav_file<P: AsRef<Path>>(file_path: P, expected_samples: usize) ->
     Ok(())
 }
 
-/// Save audio samples as a WAV file
-pub fn save_wav_file<P: AsRef<Path>>(file_path: P, samples: &[f32]) -> Result<()> {
+/// The single 16 kHz mono 16-bit WAV encoding, shared by the on-disk and
+/// in-memory paths so the format can never drift between them.
+fn write_wav_16k_mono<W: std::io::Write + std::io::Seek>(sink: W, samples: &[f32]) -> Result<()> {
     let spec = WavSpec {
         channels: 1,
         sample_rate: 16000,
@@ -36,36 +37,28 @@ pub fn save_wav_file<P: AsRef<Path>>(file_path: P, samples: &[f32]) -> Result<()
         sample_format: hound::SampleFormat::Int,
     };
 
-    let mut writer = WavWriter::create(file_path.as_ref(), spec)?;
-
-    // Convert f32 samples to i16 for WAV
+    let mut writer = WavWriter::new(sink, spec)?;
     for sample in samples {
         let sample_i16 = (sample * i16::MAX as f32) as i16;
         writer.write_sample(sample_i16)?;
     }
-
     writer.finalize()?;
+    Ok(())
+}
+
+/// Save audio samples as a WAV file (streamed to disk, not buffered in memory)
+pub fn save_wav_file<P: AsRef<Path>>(file_path: P, samples: &[f32]) -> Result<()> {
+    let file = std::io::BufWriter::new(std::fs::File::create(file_path.as_ref())?);
+    write_wav_16k_mono(file, samples)?;
     debug!("Saved WAV file: {:?}", file_path.as_ref());
     Ok(())
 }
 
-/// Encode audio samples as in-memory WAV bytes (16 kHz mono 16-bit), for
-/// uploading to cloud transcription APIs.
+/// Encode audio samples as in-memory WAV bytes, for uploading to cloud
+/// transcription APIs.
 pub fn wav_bytes_16k_mono(samples: &[f32]) -> Result<Vec<u8>> {
-    let spec = WavSpec {
-        channels: 1,
-        sample_rate: 16000,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
-
-    let mut cursor = std::io::Cursor::new(Vec::new());
-    let mut writer = WavWriter::new(&mut cursor, spec)?;
-    for sample in samples {
-        let sample_i16 = (sample * i16::MAX as f32) as i16;
-        writer.write_sample(sample_i16)?;
-    }
-    writer.finalize()?;
-
+    // 44-byte header + 2 bytes per i16 sample
+    let mut cursor = std::io::Cursor::new(Vec::with_capacity(44 + samples.len() * 2));
+    write_wav_16k_mono(&mut cursor, samples)?;
     Ok(cursor.into_inner())
 }

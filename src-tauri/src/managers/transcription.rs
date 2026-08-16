@@ -482,6 +482,16 @@ impl TranscriptionManager {
         model_id: &str,
         device_index: Option<usize>,
     ) -> Result<()> {
+        // An already-active cloud model has nothing to load — return before
+        // emitting any loading events, so recording starts (which call
+        // initiate_model_load on every press) don't fire spurious
+        // loading_started/loading_completed pairs.
+        if model_id.starts_with(crate::managers::model::remote::CLOUD_MODEL_PREFIX)
+            && self.get_current_model().as_deref() == Some(model_id)
+        {
+            return Ok(());
+        }
+
         apply_accelerator_settings(&self.app_handle);
 
         let load_start = std::time::Instant::now();
@@ -705,6 +715,8 @@ impl TranscriptionManager {
                 })?;
                 LoadedEngine::Cohere(engine)
             }
+            // Handled by the early return above — no local engine to build.
+            EngineType::Cloud => unreachable!("cloud models return before engine construction"),
         };
 
         // Update the current engine and model ID
@@ -1173,17 +1185,42 @@ impl TranscriptionManager {
         .emit(&self.app_handle);
     }
 
-    /// Async transcription entry point: routes cloud models to their HTTP API
-    /// and local engines through `spawn_blocking` so blocking inference never
-    /// runs on a tokio worker thread.
+    /// The model the next transcription will run on. `current_model_id` is
+    /// only authoritative when it names something real: a resident engine, or
+    /// a cloud model (which holds no engine by design). A lingering id with no
+    /// engine (e.g. after a selection switch under unload=Immediately skipped
+    /// eager loading) is stale — fall back to the persisted selection.
+    fn resolve_active_model(&self, settings: &AppSettings) -> String {
+        self.get_current_model()
+            .filter(|id| {
+                self.is_model_loaded()
+                    || crate::managers::model::remote::parse_cloud_model_id(id).is_some()
+            })
+            .unwrap_or_else(|| settings.selected_model.clone())
+    }
+
+    /// Whether the next transcription would route to a cloud provider. Used by
+    /// callers that need cloud-specific handling (e.g. cancellation can abort
+    /// an HTTP request mid-flight, unlike local inference).
+    pub fn active_model_is_cloud(&self) -> bool {
+        let settings = get_settings(&self.app_handle);
+        crate::managers::model::remote::parse_cloud_model_id(&self.resolve_active_model(&settings))
+            .is_some()
+    }
+
+    /// Async transcription entry point — the single place that routes between
+    /// cloud models (HTTP API) and local engines (`transcribe` via
+    /// `spawn_blocking`, so blocking inference never runs on a tokio worker).
     pub async fn transcribe_async(&self, audio: Vec<f32>) -> Result<String> {
         let settings = get_settings(&self.app_handle);
-        let active_model = self
-            .get_current_model()
-            .unwrap_or_else(|| settings.selected_model.clone());
+        let active_model = self.resolve_active_model(&settings);
 
-        if crate::managers::model::remote::parse_cloud_model_id(&active_model).is_some() {
-            return self.transcribe_cloud(&settings, &active_model, audio).await;
+        if let Some((provider_id, model)) =
+            crate::managers::model::remote::parse_cloud_model_id(&active_model)
+        {
+            return self
+                .transcribe_cloud(&settings, provider_id, model, audio)
+                .await;
         }
 
         let tm = self.clone();
@@ -1196,13 +1233,10 @@ impl TranscriptionManager {
     async fn transcribe_cloud(
         &self,
         settings: &AppSettings,
-        active_model: &str,
+        provider_id: &str,
+        model: &str,
         audio: Vec<f32>,
     ) -> Result<String> {
-        let (provider_id, model) =
-            crate::managers::model::remote::parse_cloud_model_id(active_model)
-                .ok_or_else(|| anyhow::anyhow!("Invalid cloud model id: {}", active_model))?;
-
         self.touch_activity();
 
         if audio.is_empty() {
@@ -1216,22 +1250,36 @@ impl TranscriptionManager {
                 provider_id
             )
         })?;
-        let api_key = settings
-            .stt_api_keys
-            .get(provider_id)
-            .cloned()
-            .unwrap_or_default();
-        if api_key.trim().is_empty() && !provider.allow_base_url_edit {
+        // Enforce the same policy that decides selector visibility: a model
+        // removed from the enabled list (or an unconfigured provider) must not
+        // keep receiving audio just because it is still selected. The missing-
+        // key case is checked first for the more actionable error message.
+        if settings.stt_api_key_missing(provider) {
             return Err(anyhow::anyhow!(
                 "API key for {} is not set. Add it in Settings → Models → Cloud transcription.",
                 provider.label
             ));
         }
+        if !provider.models.iter().any(|m| m.trim() == model)
+            || !settings.stt_provider_is_visible(provider)
+        {
+            return Err(anyhow::anyhow!(
+                "Cloud model '{}' is no longer enabled for {}. Update the selection in Settings → Models.",
+                model,
+                provider.label
+            ));
+        }
+        let api_key = settings.stt_api_key(provider_id);
 
-        // Resolve the persisted language intent for this model, then normalize
-        // to the bare ISO-639-1 code OpenAI-compatible APIs expect.
-        let validated_language =
-            effective_language_for_model(settings, self.model_manager.as_ref(), active_model);
+        // Cloud models are whisper-family with auto-detection, so resolve the
+        // persisted language intent directly against the whisper language set,
+        // then normalize to the bare ISO-639-1 code the API expects.
+        let model_languages = crate::managers::model::whisper_languages();
+        let validated_language = crate::managers::model::effective_language(
+            &settings.selected_language,
+            model_languages,
+            true,
+        );
         let language: Option<String> = match validated_language.as_str() {
             "" | "auto" => None,
             lang => Some(base_language_code(normalize_cjk_language(lang)).to_string()),
@@ -1253,7 +1301,7 @@ impl TranscriptionManager {
                 language: language.as_deref(),
                 prompt: prompt.as_deref(),
             },
-            &audio,
+            audio,
         )
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
@@ -1261,24 +1309,15 @@ impl TranscriptionManager {
         // Same post-run text pipeline as local engines. Custom words were
         // already passed as the prompt, so fuzzy correction is skipped —
         // matching the local whisper-family behavior.
-        let model_languages = self
-            .model_manager
-            .get_model_info(active_model)
-            .map(|info| info.supported_languages)
-            .unwrap_or_default();
-        let output_language = resolve_output_language_evidence(
-            settings,
-            language.as_deref(),
-            &model_languages,
-            false,
-        );
+        let output_language =
+            resolve_output_language_evidence(settings, language.as_deref(), model_languages, false);
         debug!("Output language evidence: {:?}", output_language);
         let filtered = post_process_transcription_text(
             text,
             settings,
             true,
             &output_language,
-            &model_languages,
+            model_languages,
         );
 
         let elapsed_secs = st.elapsed().as_secs_f64();
@@ -1306,17 +1345,6 @@ impl TranscriptionManager {
             return Err(anyhow::anyhow!(
                 "Simulated transcription failure (HANDY_FORCE_TRANSCRIPTION_FAILURE)"
             ));
-        }
-
-        // Cloud models must go through `transcribe_async`; there is no local
-        // engine to run here.
-        if let Some(active) = self.get_current_model() {
-            if active.starts_with(crate::managers::model::remote::CLOUD_MODEL_PREFIX) {
-                return Err(anyhow::anyhow!(
-                    "Cloud model '{}' requires the async transcription path",
-                    active
-                ));
-            }
         }
 
         // Update last activity timestamp

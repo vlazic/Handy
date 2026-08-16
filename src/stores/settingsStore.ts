@@ -82,6 +82,29 @@ const DEFAULT_AUDIO_DEVICE: AudioDevice = {
   is_default: true,
 };
 
+// Shared scaffold for the cloud STT setting commands: loading flag,
+// command call, error logging, settings refresh.
+async function runSttCommand(
+  store: Pick<SettingsStore, "setUpdating" | "refreshSettings">,
+  updateKey: string,
+  label: string,
+  invoke: () => Promise<{ status: "ok" | "error"; error?: unknown }>,
+): Promise<void> {
+  store.setUpdating(updateKey, true);
+  try {
+    const result = await invoke();
+    if (result.status === "error") {
+      console.error(`Failed to update STT ${label}:`, result.error);
+      return;
+    }
+    await store.refreshSettings();
+  } catch (error) {
+    console.error(`Failed to update STT ${label}:`, error);
+  } finally {
+    store.setUpdating(updateKey, false);
+  }
+}
+
 const settingUpdaters: {
   [K in keyof Settings]?: (value: Settings[K]) => Promise<unknown>;
 } = {
@@ -590,75 +613,24 @@ export const useSettingsStore = create<SettingsStore>()(
       })),
 
     updateSttApiKey: async (providerId, apiKey) => {
-      const { setUpdating, refreshSettings, setSttModelOptions } = get();
-      const updateKey = `stt_api_key:${providerId}`;
-
       // Clear cached model suggestions when the key changes.
-      setSttModelOptions(providerId, []);
-      setUpdating(updateKey, true);
-
-      try {
-        const result = await commands.changeSttApiKeySetting(
-          providerId,
-          apiKey,
-        );
-        if (result.status === "error") {
-          console.error("Failed to update STT API key:", result.error);
-          return;
-        }
-        await refreshSettings();
-      } catch (error) {
-        console.error("Failed to update STT API key:", error);
-      } finally {
-        setUpdating(updateKey, false);
-      }
+      get().setSttModelOptions(providerId, []);
+      await runSttCommand(get(), `stt_api_key:${providerId}`, "API key", () =>
+        commands.changeSttApiKeySetting(providerId, apiKey),
+      );
     },
 
     updateSttBaseUrl: async (providerId, baseUrl) => {
-      const { setUpdating, refreshSettings, setSttModelOptions } = get();
-      const updateKey = `stt_base_url:${providerId}`;
-
-      setSttModelOptions(providerId, []);
-      setUpdating(updateKey, true);
-
-      try {
-        const result = await commands.changeSttBaseUrlSetting(
-          providerId,
-          baseUrl,
-        );
-        if (result.status === "error") {
-          console.error("Failed to update STT base URL:", result.error);
-          return;
-        }
-        await refreshSettings();
-      } catch (error) {
-        console.error("Failed to update STT base URL:", error);
-      } finally {
-        setUpdating(updateKey, false);
-      }
+      get().setSttModelOptions(providerId, []);
+      await runSttCommand(get(), `stt_base_url:${providerId}`, "base URL", () =>
+        commands.changeSttBaseUrlSetting(providerId, baseUrl),
+      );
     },
 
     updateSttProviderModels: async (providerId, models) => {
-      const { setUpdating, refreshSettings } = get();
-      const updateKey = `stt_models:${providerId}`;
-
-      setUpdating(updateKey, true);
-
-      try {
-        const result = await commands.updateSttProviderModels(
-          providerId,
-          models,
-        );
-        if (result.status === "error") {
-          console.error("Failed to update STT models:", result.error);
-          return;
-        }
-        await refreshSettings();
-      } catch (error) {
-        console.error("Failed to update STT models:", error);
-      } finally {
-        setUpdating(updateKey, false);
-      }
+      await runSttCommand(get(), `stt_models:${providerId}`, "models", () =>
+        commands.updateSttProviderModels(providerId, models),
+      );
     },
 
     fetchSttModels: async (providerId) => {

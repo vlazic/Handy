@@ -1,12 +1,10 @@
 import { useCallback, useMemo, useState } from "react";
 import { useSettings } from "../../../../hooks/useSettings";
-import type { SttProvider } from "@/bindings";
 import type { DropdownOption } from "../../../ui/Dropdown";
 
 type SttProviderState = {
   providerOptions: DropdownOption[];
   selectedProviderId: string;
-  selectedProvider: SttProvider | undefined;
   isCustomProvider: boolean;
   baseUrl: string;
   handleBaseUrlChange: (value: string) => void;
@@ -150,7 +148,6 @@ export const useSttProviderState = (): SttProviderState => {
   return {
     providerOptions,
     selectedProviderId,
-    selectedProvider,
     isCustomProvider,
     baseUrl,
     handleBaseUrlChange,

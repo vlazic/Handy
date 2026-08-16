@@ -128,6 +128,18 @@ pub fn switch_active_model(app: &AppHandle, model_id: &str) -> Result<(), String
     // Skip eager loading if unload is set to "Immediately" — the model
     // will be loaded on-demand during the next transcription.
     if unload_timeout == ModelUnloadTimeout::Immediately {
+        // A cloud model holds no engine but marks itself active via
+        // current_model_id, which no unload path ever clears (the idle/
+        // immediate unload machinery is gated on a loaded engine). Clear it
+        // here so the next dictation routes on the new selection instead of
+        // silently uploading audio to the previous provider.
+        if transcription_manager
+            .get_current_model()
+            .is_some_and(|id| id.starts_with(crate::managers::model::remote::CLOUD_MODEL_PREFIX))
+        {
+            let _ = transcription_manager.unload_model();
+        }
+
         // Notify frontend — load_model won't be called so no events
         // would otherwise be emitted.
         let _ = app.emit(

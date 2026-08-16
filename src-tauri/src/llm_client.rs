@@ -135,12 +135,9 @@ struct ChatMessageResponse {
     content: Option<String>,
 }
 
-/// Build headers for API requests based on provider type
-fn build_headers(provider: &PostProcessProvider, api_key: &str) -> Result<HeaderMap, String> {
+/// The app-identifying headers sent with every outbound API request.
+pub(crate) fn app_identity_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
-
-    // Common headers
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(
         REFERER,
         HeaderValue::from_static("https://github.com/cjpais/Handy"),
@@ -149,6 +146,15 @@ fn build_headers(provider: &PostProcessProvider, api_key: &str) -> Result<Header
         USER_AGENT,
         HeaderValue::from_static("Handy/1.0 (+https://github.com/cjpais/Handy)"),
     );
+    headers
+}
+
+/// Build headers for API requests based on provider type
+fn build_headers(provider: &PostProcessProvider, api_key: &str) -> Result<HeaderMap, String> {
+    let mut headers = app_identity_headers();
+
+    // Common headers
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert("X-Title", HeaderValue::from_static("Handy"));
 
     // Provider-specific auth headers
@@ -503,20 +509,31 @@ pub async fn fetch_models(
         .await
         .map_err(|e| report_reqwest_error("Failed to parse model list response", &e))?;
 
+    Ok(parse_openai_model_list(&parsed, |_| true))
+}
+
+/// Extract model ids from an OpenAI-compatible model list response. Handles
+/// both the OpenAI shape `{ data: [ { id: "..." }, ... ] }` (with `name` as an
+/// id fallback, entries filtered by `keep`) and a bare array of id strings.
+pub(crate) fn parse_openai_model_list(
+    parsed: &serde_json::Value,
+    keep: impl Fn(&serde_json::Value) -> bool,
+) -> Vec<String> {
     let mut models = Vec::new();
 
-    // Handle OpenAI format: { data: [ { id: "..." }, ... ] }
     if let Some(data) = parsed.get("data").and_then(|d| d.as_array()) {
         for entry in data {
-            if let Some(id) = entry.get("id").and_then(|i| i.as_str()) {
-                models.push(id.to_string());
-            } else if let Some(name) = entry.get("name").and_then(|n| n.as_str()) {
-                models.push(name.to_string());
+            let id = entry
+                .get("id")
+                .and_then(|i| i.as_str())
+                .or_else(|| entry.get("name").and_then(|n| n.as_str()));
+            if let Some(id) = id {
+                if keep(entry) {
+                    models.push(id.to_string());
+                }
             }
         }
-    }
-    // Handle array format: [ "model1", "model2", ... ]
-    else if let Some(array) = parsed.as_array() {
+    } else if let Some(array) = parsed.as_array() {
         for entry in array {
             if let Some(model) = entry.as_str() {
                 models.push(model.to_string());
@@ -524,7 +541,7 @@ pub async fn fetch_models(
         }
     }
 
-    Ok(models)
+    models
 }
 
 #[cfg(test)]
