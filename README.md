@@ -1,5 +1,10 @@
 # Handy
 
+> **Fork notice**: This is [vlazic](https://github.com/vlazic)'s fork of
+> [cjpais/Handy](https://github.com/cjpais/Handy). It adds cloud STT providers
+> (Groq / any OpenAI-compatible endpoint) and Linux ydotool paste fixes.
+> See [FORK.md](./FORK.md) for changes, install, and sync policy.
+
 [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/invite/WVBeWsNXK4)
 
 **A free, open source, and extensible speech-to-text application that works completely offline.**
