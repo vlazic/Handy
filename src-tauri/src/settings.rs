@@ -477,6 +477,13 @@ pub struct AppSettings {
     pub reliable_paste: bool,
     #[serde(default = "default_typing_tool")]
     pub typing_tool: TypingTool,
+    /// Chord used when `paste_method` is `Direct` but the resolved typing tool
+    /// is ydotool, which cannot type non-ASCII text. Such transcripts are routed
+    /// through the clipboard, and the target app has to honor this chord for the
+    /// paste to land. Terminals want `CtrlShiftV`; most other apps want `CtrlV`.
+    /// Linux only.
+    #[serde(default = "default_non_ascii_fallback_paste_method")]
+    pub non_ascii_fallback_paste_method: PasteMethod,
     #[serde(default)]
     pub external_script_path: Option<String>,
     #[serde(default = "default_filler_word_removal_enabled")]
@@ -799,6 +806,10 @@ fn default_typing_tool() -> TypingTool {
     TypingTool::Auto
 }
 
+fn default_non_ascii_fallback_paste_method() -> PasteMethod {
+    PasteMethod::CtrlV
+}
+
 fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
     let mut changed = false;
     for provider in default_post_process_providers() {
@@ -1002,6 +1013,7 @@ pub fn get_default_settings() -> AppSettings {
         paste_delay_after_ms: default_paste_delay_after_ms(),
         reliable_paste: false,
         typing_tool: default_typing_tool(),
+        non_ascii_fallback_paste_method: default_non_ascii_fallback_paste_method(),
         external_script_path: None,
         filler_word_removal_enabled: default_filler_word_removal_enabled(),
         custom_filler_words: None,

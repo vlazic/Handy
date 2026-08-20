@@ -237,6 +237,23 @@ fn try_direct_typing_linux(text: &str, preferred_tool: TypingTool) -> Result<boo
     Ok(false)
 }
 
+/// Coerces the configured non-ASCII fallback into a chord that
+/// [`paste_via_clipboard`] can actually send.
+///
+/// The target app has to honor this chord for the paste to land, and there is
+/// no way to detect what it accepts: terminals bind Ctrl+Shift+V, most other
+/// apps bind Ctrl+V. `Direct`, `None` and `ExternalScript` are not chords, so
+/// they fall back to Ctrl+V rather than dropping the transcription.
+#[cfg(target_os = "linux")]
+fn non_ascii_fallback_chord(configured: PasteMethod) -> PasteMethod {
+    match configured {
+        method @ (PasteMethod::CtrlV | PasteMethod::CtrlShiftV | PasteMethod::ShiftInsert) => {
+            method
+        }
+        PasteMethod::Direct | PasteMethod::None | PasteMethod::ExternalScript => PasteMethod::CtrlV,
+    }
+}
+
 /// Whether the direct-typing tool this configuration resolves to is ydotool —
 /// the only tool that cannot type non-ASCII text. ydotool maps characters to
 /// raw US-layout uinput keycodes and aborts the rest of the string at the
@@ -774,17 +791,20 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
             {
                 // ydotool would silently truncate the text at the first
                 // non-ASCII character, so route such transcriptions through
-                // the clipboard: the full text survives, and only the Ctrl+V
+                // the clipboard: the full text survives, and only the paste
                 // chord goes through ydotool.
                 if !text.is_ascii() && direct_typing_resolves_to_ydotool(settings.typing_tool) {
+                    let fallback =
+                        non_ascii_fallback_chord(settings.non_ascii_fallback_paste_method);
                     info!(
                         "Direct typing would use ydotool, which cannot type non-ASCII text; \
-                         pasting via clipboard instead"
+                         pasting via clipboard with {:?} instead",
+                        fallback
                     );
                     paste_via_clipboard(
                         &text,
                         &app_handle,
-                        &PasteMethod::CtrlV,
+                        &fallback,
                         paste_delay_ms,
                         paste_delay_after_ms,
                     )?;
@@ -876,6 +896,32 @@ we're using raw keycodes now.
 Syntax: <keycode>:<pressed>
 e.g. 28:1 28:0 means pressing on the Enter button on a standard US keyboard.
 "#;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn non_ascii_fallback_keeps_configured_chords() {
+        for chord in [
+            PasteMethod::CtrlV,
+            PasteMethod::CtrlShiftV,
+            PasteMethod::ShiftInsert,
+        ] {
+            assert_eq!(non_ascii_fallback_chord(chord), chord);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn non_ascii_fallback_coerces_non_chords_to_ctrl_v() {
+        // paste_via_clipboard rejects anything that is not a chord, so these
+        // must never reach it: the transcription would be dropped on the floor.
+        for not_a_chord in [
+            PasteMethod::Direct,
+            PasteMethod::None,
+            PasteMethod::ExternalScript,
+        ] {
+            assert_eq!(non_ascii_fallback_chord(not_a_chord), PasteMethod::CtrlV);
+        }
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

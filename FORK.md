@@ -21,8 +21,12 @@ upstream.
   keys are stored locally in plain text — both disclosed in the UI.
 - **ydotool paste fix (Linux)**: when the direct-typing tool resolves to
   ydotool and the transcription contains non-ASCII text (e.g. š, đ, č, ć, ž),
-  paste routes through the clipboard + Ctrl+V instead of being silently
-  truncated at the first unmappable character.
+  paste routes through the clipboard + a paste chord instead of being silently
+  truncated at the first unmappable character. The chord is configurable
+  (**Advanced → Output → Non-ASCII Paste Shortcut**), because the target app
+  has to honor it and there is no way to detect what it accepts: terminals
+  bind Ctrl+Shift+V, most other apps bind Ctrl+V. It defaults to Ctrl+V; with
+  the wrong chord the text lands nowhere and nothing reports an error.
 - **Updater neutralized**, in three layers: the updater **pubkey is the
   fork's own** minisign key (upstream artifacts can never pass signature
   verification — the hard guarantee; the private key + password live in the
@@ -80,7 +84,12 @@ the rest:
    `/dev/uinput` access: a udev rule
    `KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"`.
    Non-ASCII text is handled by this fork's clipboard fallback; ydotool alone
-   would truncate it.
+   would truncate it. That fallback injects a paste chord, so set **Non-ASCII
+   Paste Shortcut** to match where you dictate — Ctrl+Shift+V if that is a
+   terminal (kitty, GNOME Terminal, Ghostty, Alacritty), Ctrl+V otherwise.
+   Installing `wtype` (`sudo apt install wtype`) or `dotool` sidesteps the
+   detour entirely: both type UTF-8 directly and both are preferred over
+   ydotool by the auto-detection, so no clipboard and no chord is involved.
 3. **Overlay** — if your compositor lacks the layer-shell protocol (GNOME
    does), set the recording overlay to **None**: as a regular window it can
    steal focus and swallow the typed text. (Related startup issues:

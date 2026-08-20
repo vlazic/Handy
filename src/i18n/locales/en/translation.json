@@ -355,6 +355,15 @@
           "auto": "Auto (Recommended)"
         }
       },
+      "nonAsciiFallbackPasteMethod": {
+        "title": "Non-ASCII Paste Shortcut",
+        "description": "ydotool cannot type accented or non-Latin characters, so those transcriptions are pasted from the clipboard instead. Pick the paste shortcut your target app actually uses: terminals need Ctrl+Shift+V, most other apps need Ctrl+V. Installing wtype or dotool avoids this detour entirely.",
+        "options": {
+          "ctrlV": "Ctrl+V",
+          "ctrlShiftV": "Ctrl+Shift+V (terminals)",
+          "shiftInsert": "Shift+Insert"
+        }
+      },
       "clipboardHandling": {
         "title": "Clipboard Handling",
         "description": "Don't Modify Clipboard preserves your current clipboard contents after transcription. Copy to Clipboard leaves the transcription result in your clipboard after pasting.",

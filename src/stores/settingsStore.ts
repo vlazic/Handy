@@ -169,6 +169,8 @@ const settingUpdaters: {
     commands.changeReliablePasteSetting(value as boolean),
   paste_method: (value) => commands.changePasteMethodSetting(value as string),
   typing_tool: (value) => commands.changeTypingToolSetting(value as string),
+  non_ascii_fallback_paste_method: (value) =>
+    commands.changeNonAsciiFallbackPasteMethodSetting(value as string),
   external_script_path: (value) =>
     commands.changeExternalScriptPathSetting(value as string | null),
   clipboard_handling: (value) =>

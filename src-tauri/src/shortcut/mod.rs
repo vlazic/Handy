@@ -923,6 +923,32 @@ pub fn change_typing_tool_setting(app: AppHandle, tool: String) -> Result<(), St
 
 #[tauri::command]
 #[specta::specta]
+pub fn change_non_ascii_fallback_paste_method_setting(
+    app: AppHandle,
+    method: String,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    // Only chords are meaningful here: this setting exists precisely because
+    // direct typing is unavailable for the text in question.
+    let parsed = match method.as_str() {
+        "ctrl_v" => PasteMethod::CtrlV,
+        "shift_insert" => PasteMethod::ShiftInsert,
+        "ctrl_shift_v" => PasteMethod::CtrlShiftV,
+        other => {
+            warn!(
+                "Invalid non-ASCII fallback paste method '{}', defaulting to ctrl_v",
+                other
+            );
+            PasteMethod::CtrlV
+        }
+    };
+    settings.non_ascii_fallback_paste_method = parsed;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_external_script_path_setting(
     app: AppHandle,
     path: Option<String>,
