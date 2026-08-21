@@ -156,85 +156,115 @@ fn try_send_key_combo_linux(paste_method: &PasteMethod) -> Result<bool, String> 
     Ok(false)
 }
 
-/// Attempts to type text directly using Linux-native tools.
-/// Returns `Ok(true)` if a native tool handled it, `Ok(false)` to fall back to enigo.
+/// Decides which Linux-native tool direct typing would use, without typing anything.
+///
+/// This is the single source of truth for the selection chain: an explicitly
+/// configured tool is used if and only if it is installed, and `Auto` walks the
+/// display-server-specific fallback order. `None` means nothing would handle the
+/// text - either the explicitly chosen tool is missing, or `Auto` found no
+/// candidate and the caller should fall back to enigo.
+///
+/// [`try_direct_typing_linux`] is the only consumer that types; everything else
+/// (the ydotool non-ASCII guard, the `get_resolved_typing_tool` command the
+/// settings UI asks) must call this rather than re-implement the order. A
+/// frontend copy of this chain is exactly what hid the typing-key-delay slider.
 #[cfg(target_os = "linux")]
-fn try_direct_typing_linux(text: &str, preferred_tool: TypingTool) -> Result<bool, String> {
-    // If user specified a tool, try only that one
-    if preferred_tool != TypingTool::Auto {
-        return match preferred_tool {
-            TypingTool::Wtype if is_wtype_available() => {
-                info!("Using user-specified wtype");
-                type_text_via_wtype(text)?;
-                Ok(true)
-            }
-            TypingTool::Kwtype if is_kwtype_available() => {
-                info!("Using user-specified kwtype");
-                type_text_via_kwtype(text)?;
-                Ok(true)
-            }
-            TypingTool::Dotool if is_dotool_available() => {
-                info!("Using user-specified dotool");
-                type_text_via_dotool(text)?;
-                Ok(true)
-            }
-            TypingTool::Ydotool if is_ydotool_available() => {
-                info!("Using user-specified ydotool");
-                type_text_via_ydotool(text)?;
-                Ok(true)
-            }
-            TypingTool::Xdotool if is_xdotool_available() => {
-                info!("Using user-specified xdotool");
-                type_text_via_xdotool(text)?;
-                Ok(true)
-            }
-            _ => Err(format!(
-                "Typing tool {:?} is not available on this system",
-                preferred_tool
-            )),
+pub fn resolve_direct_typing_tool(preferred: TypingTool) -> Option<String> {
+    // If the user specified a tool, it is that tool or nothing.
+    if preferred != TypingTool::Auto {
+        return match preferred {
+            TypingTool::Wtype if is_wtype_available() => Some("wtype".to_string()),
+            TypingTool::Kwtype if is_kwtype_available() => Some("kwtype".to_string()),
+            TypingTool::Dotool if is_dotool_available() => Some("dotool".to_string()),
+            TypingTool::Ydotool if is_ydotool_available() => Some("ydotool".to_string()),
+            TypingTool::Xdotool if is_xdotool_available() => Some("xdotool".to_string()),
+            _ => None,
         };
     }
 
-    // Auto mode - existing fallback chain
+    // Auto mode - the fallback chain.
     if is_wayland() {
         // KDE Wayland: prefer kwtype (uses KDE Fake Input protocol, supports umlauts)
         if is_kde_wayland() && is_kwtype_available() {
-            info!("Using kwtype for direct text input on KDE Wayland");
-            type_text_via_kwtype(text)?;
-            return Ok(true);
+            return Some("kwtype".to_string());
         }
         // Wayland: prefer wtype, then dotool, then ydotool
         // Note: wtype doesn't work on KDE (no zwp_virtual_keyboard_manager_v1 support)
         if !is_kde_wayland() && is_wtype_available() {
-            info!("Using wtype for direct text input");
-            type_text_via_wtype(text)?;
-            return Ok(true);
+            return Some("wtype".to_string());
         }
         if is_dotool_available() {
-            info!("Using dotool for direct text input");
-            type_text_via_dotool(text)?;
-            return Ok(true);
+            return Some("dotool".to_string());
         }
         if is_ydotool_available() {
-            info!("Using ydotool for direct text input");
-            type_text_via_ydotool(text)?;
-            return Ok(true);
+            return Some("ydotool".to_string());
         }
+        // xdotool is never used on Wayland.
     } else {
         // X11: prefer xdotool, then ydotool
         if is_xdotool_available() {
-            info!("Using xdotool for direct text input");
-            type_text_via_xdotool(text)?;
-            return Ok(true);
+            return Some("xdotool".to_string());
         }
         if is_ydotool_available() {
-            info!("Using ydotool for direct text input");
-            type_text_via_ydotool(text)?;
-            return Ok(true);
+            return Some("ydotool".to_string());
         }
     }
 
-    Ok(false)
+    None
+}
+
+/// Attempts to type text directly using Linux-native tools.
+/// Returns `Ok(true)` if a native tool handled it, `Ok(false)` to fall back to enigo.
+///
+/// The *choice* of tool lives in [`resolve_direct_typing_tool`]; this function
+/// only dispatches to it.
+#[cfg(target_os = "linux")]
+fn try_direct_typing_linux(
+    text: &str,
+    preferred_tool: TypingTool,
+    key_delay_ms: u64,
+) -> Result<bool, String> {
+    let explicit = preferred_tool != TypingTool::Auto;
+    let source = if explicit { "user-specified" } else { "auto-selected" };
+
+    match resolve_direct_typing_tool(preferred_tool).as_deref() {
+        Some("wtype") => {
+            info!("Using {} wtype for direct text input", source);
+            type_text_via_wtype(text)?;
+            Ok(true)
+        }
+        Some("kwtype") => {
+            info!("Using {} kwtype for direct text input", source);
+            type_text_via_kwtype(text)?;
+            Ok(true)
+        }
+        Some("dotool") => {
+            info!("Using {} dotool for direct text input", source);
+            type_text_via_dotool(text)?;
+            Ok(true)
+        }
+        Some("ydotool") => {
+            info!("Using {} ydotool for direct text input", source);
+            type_text_via_ydotool(text, key_delay_ms)?;
+            Ok(true)
+        }
+        Some("xdotool") => {
+            info!("Using {} xdotool for direct text input", source);
+            type_text_via_xdotool(text)?;
+            Ok(true)
+        }
+        Some(other) => Err(format!(
+            "Typing tool {:?} resolved to unknown tool '{}'",
+            preferred_tool, other
+        )),
+        // An explicitly configured tool that is not installed is an error, as
+        // before; Auto finding nothing means "fall back to enigo".
+        None if explicit => Err(format!(
+            "Typing tool {:?} is not available on this system",
+            preferred_tool
+        )),
+        None => Ok(false),
+    }
 }
 
 /// Coerces the configured non-ASCII fallback into a chord that
@@ -258,24 +288,16 @@ fn non_ascii_fallback_chord(configured: PasteMethod) -> PasteMethod {
 /// the only tool that cannot type non-ASCII text. ydotool maps characters to
 /// raw US-layout uinput keycodes and aborts the rest of the string at the
 /// first unmappable character, so e.g. "funkcioniše" is silently cut to
-/// "funkcioni". Mirrors the selection order in [`try_direct_typing_linux`].
+/// "funkcioni". Defers to [`resolve_direct_typing_tool`] rather than repeating
+/// the selection order.
 #[cfg(target_os = "linux")]
 fn direct_typing_resolves_to_ydotool(preferred_tool: TypingTool) -> bool {
     match preferred_tool {
+        // Explicitly configured ydotool stays "yes" even when it is not
+        // installed: that case errors out in try_direct_typing_linux rather
+        // than typing something else, so the guard must not claim otherwise.
         TypingTool::Ydotool => true,
-        TypingTool::Auto => {
-            if !is_ydotool_available() {
-                return false;
-            }
-            if is_wayland() {
-                !(is_kde_wayland() && is_kwtype_available())
-                    && !(!is_kde_wayland() && is_wtype_available())
-                    && !is_dotool_available()
-            } else {
-                !is_xdotool_available()
-            }
-        }
-        _ => false,
+        other => resolve_direct_typing_tool(other).as_deref() == Some("ydotool"),
     }
 }
 
@@ -543,9 +565,18 @@ fn type_text_via_dotool(text: &str) -> Result<(), String> {
 
 /// Type text directly via ydotool (uinput-based, requires ydotoold daemon).
 #[cfg(target_os = "linux")]
-fn type_text_via_ydotool(text: &str) -> Result<(), String> {
+fn type_text_via_ydotool(text: &str, key_delay_ms: u64) -> Result<(), String> {
+    // `-d` paces the gap between keys, `-H` holds each one down. ydotool 1.0.x
+    // defaults BOTH to 20 ms, which is ~40 ms per character; 0.1.8 (Ubuntu 24.04)
+    // had no `-H` at all. Passing them explicitly makes the rate ours rather than
+    // whatever the packaged ydotool happens to default to this release.
+    let delay = key_delay_ms.to_string();
     let output = Command::new("ydotool")
         .arg("type")
+        .arg("-d")
+        .arg(&delay)
+        .arg("-H")
+        .arg(&delay)
         .arg("--")
         .arg(text)
         .output()
@@ -745,10 +776,11 @@ fn paste_direct(
     text: &str,
     app_handle: &AppHandle,
     #[cfg(target_os = "linux")] typing_tool: TypingTool,
+    #[cfg(target_os = "linux")] key_delay_ms: u64,
 ) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
-        if try_direct_typing_linux(text, typing_tool)? {
+        if try_direct_typing_linux(text, typing_tool, key_delay_ms)? {
             return Ok(());
         }
         info!("Falling back to enigo for direct text input");
@@ -850,7 +882,12 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
                         paste_delay_after_ms,
                     )?;
                 } else {
-                    paste_direct(&text, &app_handle, settings.typing_tool)?;
+                    paste_direct(
+                        &text,
+                        &app_handle,
+                        settings.typing_tool,
+                        settings.typing_key_delay_ms,
+                    )?;
                 }
             }
             #[cfg(not(target_os = "linux"))]

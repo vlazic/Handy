@@ -355,6 +355,10 @@
           "auto": "Auto (Recommended)"
         }
       },
+      "typingKeyDelay": {
+        "title": "Typing Key Delay",
+        "description": "How long ydotool spends on each character when the Direct paste method types text. Applies only to the direct-typing path via ydotool - it is not the Paste Delay setting, which affects the clipboard path only. ydotool 1.0 defaults to 20ms, which types about 25 characters per second; lower this to type faster, raise it if an app drops characters. 0 is as fast as ydotool goes."
+      },
       "nonAsciiFallbackPasteMethod": {
         "title": "Non-ASCII Paste Shortcut",
         "description": "ydotool cannot type accented or non-Latin characters, so those transcriptions are pasted from the clipboard instead. Pick the paste shortcut your target app actually uses: terminals need Ctrl+Shift+V, most other apps need Ctrl+V. Installing wtype or dotool avoids this detour entirely.",

@@ -168,6 +168,9 @@ async changePasteMethodSetting(method: string) : Promise<Result<null, string>> {
 async getAvailableTypingTools() : Promise<string[]> {
     return await TAURI_INVOKE("get_available_typing_tools");
 },
+async getResolvedTypingTool() : Promise<string | null> {
+    return await TAURI_INVOKE("get_resolved_typing_tool");
+},
 async changeTypingToolSetting(tool: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_typing_tool_setting", { tool }) };
@@ -179,6 +182,14 @@ async changeTypingToolSetting(tool: string) : Promise<Result<null, string>> {
 async changeNonAsciiFallbackPasteMethodSetting(method: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_non_ascii_fallback_paste_method_setting", { method }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeTypingKeyDelayMsSetting(ms: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_typing_key_delay_ms_setting", { ms }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -997,7 +1008,21 @@ selected_channel?: number | null; clamshell_microphone?: string | null; selected
  * build) carries `update_checks_enabled: true`; the first fork run turns
  * checks off once and sets this, so the user's own later choice sticks.
  */
-fork_update_checks_migrated?: boolean; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; 
+fork_update_checks_migrated?: boolean; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean;
+/**
+ * Per-key pacing for the DIRECT typing path via ydotool, in milliseconds.
+ * Passed as both `--key-delay` (gap between keys) and `--key-hold` (how long
+ * each key is held), so the real cost per character is roughly twice this.
+ *
+ * WHY THIS EXISTS: ydotool 1.0.x defaults to 20 ms for BOTH, i.e. ~40 ms per
+ * character or ~25 chars/sec, and Handy never overrode them. ydotool 0.1.8 -
+ * what Ubuntu 24.04 shipped - had no `--key-hold` at all, so upgrading to
+ * 26.04 silently halved dictation speed. Measured on that upgrade: a
+ * 300-character transcription went from prompt to about twelve seconds.
+ *
+ * Not the same thing as `paste_delay_ms` below, which is clipboard-path only.
+ */
+typing_key_delay_ms?: number; paste_delay_ms?: number; paste_delay_after_ms?: number; 
 /**
  * Debug-gated ("beta") receipt-sequenced paste: restore the clipboard only
  * after the target app actually reads the transcript, instead of after a

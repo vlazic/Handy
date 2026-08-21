@@ -27,6 +27,24 @@ upstream.
   has to honor it and there is no way to detect what it accepts: terminals
   bind Ctrl+Shift+V, most other apps bind Ctrl+V. It defaults to Ctrl+V; with
   the wrong chord the text lands nowhere and nothing reports an error.
+- **ydotool typing speed (Linux)**: the direct-typing path now passes
+  `-d`/`-H` (key delay and key hold) to `ydotool type` instead of accepting
+  whatever the packaged ydotool defaults to, and the value is configurable
+  (**Advanced → Output → Typing Key Delay**, default 4ms, range 0-40ms). It
+  only shows when the configuration actually resolves to ydotool, the same
+  gate the Non-ASCII Paste Shortcut uses. Reason: ydotool 0.1.8 (Ubuntu 24.04)
+  had no `--key-hold` at all, while 1.0.4 (Ubuntu 26.04) defaults both
+  `--key-delay` and `--key-hold` to 20ms, so an OS upgrade roughly halved
+  dictation speed to about 25 characters per second with nothing in the logs
+  to say why. Unrelated to Paste Delay, which paces the clipboard path.
+- **`get_resolved_typing_tool` command (Linux)**: reports the tool direct
+  typing would actually use right now, from the single
+  `resolve_direct_typing_tool` chain in `clipboard.rs` that also drives
+  `try_direct_typing_linux`. It exists so the settings UI never re-implements
+  that chain: the Typing Key Delay slider first shipped with a TypeScript copy
+  of the fallback order that counted xdotool as preferred over ydotool on every
+  session, so the slider never appeared on a Wayland machine that happened to
+  have xdotool installed. xdotool is only ever used on X11.
 - **Updater neutralized**, in three layers: the updater **pubkey is the
   fork's own** minisign key (upstream artifacts can never pass signature
   verification — the hard guarantee; the private key + password live in the

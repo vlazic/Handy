@@ -171,6 +171,8 @@ const settingUpdaters: {
   typing_tool: (value) => commands.changeTypingToolSetting(value as string),
   non_ascii_fallback_paste_method: (value) =>
     commands.changeNonAsciiFallbackPasteMethodSetting(value as string),
+  typing_key_delay_ms: (value) =>
+    commands.changeTypingKeyDelayMsSetting(value as number),
   external_script_path: (value) =>
     commands.changeExternalScriptPathSetting(value as string | null),
   clipboard_handling: (value) =>

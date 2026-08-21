@@ -466,6 +466,19 @@ pub struct AppSettings {
     pub keyboard_implementation: KeyboardImplementation,
     #[serde(default = "default_show_tray_icon")]
     pub show_tray_icon: bool,
+    /// Per-key pacing for the DIRECT typing path via ydotool, in milliseconds.
+    /// Passed as both `--key-delay` (gap between keys) and `--key-hold` (how long
+    /// each key is held), so the real cost per character is roughly twice this.
+    ///
+    /// WHY THIS EXISTS: ydotool 1.0.x defaults to 20 ms for BOTH, i.e. ~40 ms per
+    /// character or ~25 chars/sec, and Handy never overrode them. ydotool 0.1.8 -
+    /// what Ubuntu 24.04 shipped - had no `--key-hold` at all, so upgrading to
+    /// 26.04 silently halved dictation speed. Measured on that upgrade: a
+    /// 300-character transcription went from prompt to about twelve seconds.
+    ///
+    /// Not the same thing as `paste_delay_ms` below, which is clipboard-path only.
+    #[serde(default = "default_typing_key_delay_ms")]
+    pub typing_key_delay_ms: u64,
     #[serde(default = "default_paste_delay_ms")]
     pub paste_delay_ms: u64,
     #[serde(default = "default_paste_delay_after_ms")]
@@ -596,6 +609,13 @@ fn default_log_level() -> LogLevel {
 
 fn default_word_correction_threshold() -> f64 {
     0.18
+}
+
+/// 4 ms, so ~8 ms per character - five times faster than ydotool's own default
+/// and still slow enough to leave margin for toolkits that poll their input
+/// slowly. 0 works on most setups; raise this if an application drops keys.
+fn default_typing_key_delay_ms() -> u64 {
+    4
 }
 
 fn default_paste_delay_ms() -> u64 {
@@ -1032,6 +1052,7 @@ pub fn get_default_settings() -> AppSettings {
         lazy_stream_close: false,
         keyboard_implementation: KeyboardImplementation::default(),
         show_tray_icon: default_show_tray_icon(),
+        typing_key_delay_ms: default_typing_key_delay_ms(),
         paste_delay_ms: default_paste_delay_ms(),
         paste_delay_after_ms: default_paste_delay_after_ms(),
         reliable_paste: false,

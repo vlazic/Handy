@@ -9,6 +9,7 @@ import { AutostartToggle } from "../AutostartToggle";
 import { ShowTrayIcon } from "../ShowTrayIcon";
 import { PasteMethodSetting } from "../PasteMethod";
 import { TypingToolSetting } from "../TypingTool";
+import { TypingKeyDelaySetting } from "../TypingKeyDelay";
 import { NonAsciiFallbackPasteMethodSetting } from "../NonAsciiFallbackPasteMethod";
 import { ClipboardHandlingSetting } from "../ClipboardHandling";
 import { AutoSubmit } from "../AutoSubmit";
@@ -43,6 +44,7 @@ export const AdvancedSettings: React.FC = () => {
       <SettingsGroup title={t("settings.advanced.groups.output")}>
         <PasteMethodSetting descriptionMode="tooltip" grouped={true} />
         <TypingToolSetting descriptionMode="tooltip" grouped={true} />
+        <TypingKeyDelaySetting descriptionMode="tooltip" grouped={true} />
         <NonAsciiFallbackPasteMethodSetting
           descriptionMode="tooltip"
           grouped={true}

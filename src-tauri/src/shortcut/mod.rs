@@ -900,6 +900,29 @@ pub fn get_available_typing_tools() -> Vec<String> {
     }
 }
 
+/// Returns the typing tool direct typing would actually use right now, given the
+/// configured `typing_tool` plus this machine's display server and installed
+/// tools. `None` means direct typing would fall back to enigo, or that the
+/// explicitly configured tool is not installed.
+///
+/// This exists so the settings UI never re-implements the selection chain: the
+/// typing-key-delay slider used to guess it in TypeScript and got it wrong on a
+/// Wayland machine that happened to have xdotool installed.
+#[tauri::command]
+#[specta::specta]
+pub fn get_resolved_typing_tool(app: AppHandle) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let settings = settings::get_settings(&app);
+        crate::clipboard::resolve_direct_typing_tool(settings.typing_tool)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app;
+        None
+    }
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_typing_tool_setting(app: AppHandle, tool: String) -> Result<(), String> {
@@ -943,6 +966,15 @@ pub fn change_non_ascii_fallback_paste_method_setting(
         }
     };
     settings.non_ascii_fallback_paste_method = parsed;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_typing_key_delay_ms_setting(app: AppHandle, ms: u64) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.typing_key_delay_ms = ms;
     settings::write_settings(&app, settings);
     Ok(())
 }
