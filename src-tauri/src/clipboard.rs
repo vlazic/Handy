@@ -312,8 +312,9 @@ pub(crate) fn direct_typing_resolves_to_ydotool(preferred_tool: TypingTool) -> b
 /// Always includes "auto" as the first entry.
 #[cfg(target_os = "linux")]
 pub fn get_available_typing_tools() -> Vec<String> {
-    // Probes live, not cached: this drives the Typing Tool dropdown, and a tool
-    // installed while Handy is running must show up when Settings is reopened.
+    // Probes live rather than caching: this drives the Typing Tool dropdown, so
+    // a tool installed while Handy is running is offered as soon as the user
+    // navigates back to Advanced, without waiting for a restart.
     let mut tools = vec!["auto".to_string()];
     for tool in ["wtype", "kwtype", "dotool", "ydotool", "xdotool"] {
         if tool_installed(tool) {
@@ -347,17 +348,26 @@ fn wtype_usable() -> bool {
 /// path from disagreeing about which tools exist.
 #[cfg(target_os = "linux")]
 fn tool_installed(tool: &str) -> bool {
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::ffi::OsStrExt;
 
-    std::env::var_os("PATH")
-        .map(|path| {
-            std::env::split_paths(&path).any(|dir| {
-                std::fs::metadata(dir.join(tool))
-                    .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-                    .unwrap_or(false)
-            })
+    // `access(X_OK)` rather than testing the mode bits, because the question is
+    // whether *this* user can execute it. Any-execute-bit would call a root-only
+    // 0700 binary installed, hand it back from the cascade, and then fail the
+    // spawn with EACCES instead of falling through to the next tool — which is
+    // what the `which` this replaces did. `access` answers for directories too,
+    // so the is_file check still has to run.
+    std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path).any(|dir| {
+            let candidate = dir.join(tool);
+            if !candidate.is_file() {
+                return false;
+            }
+            match std::ffi::CString::new(candidate.as_os_str().as_bytes()) {
+                Ok(c_path) => unsafe { libc::access(c_path.as_ptr(), libc::X_OK) == 0 },
+                Err(_) => false,
+            }
         })
-        .unwrap_or(false)
+    })
 }
 
 /// Check if wtype is available (Wayland text input tool)

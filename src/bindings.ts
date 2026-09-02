@@ -182,11 +182,11 @@ async getAvailableTypingTools() : Promise<string[]> {
  * transcription detours through the clipboard, so the settings UI must ask
  * this rather than derive it from the tool name.
  * 
- * Deliberately a bool, not the resolved tool name for the caller to compare:
- * an explicitly configured but uninstalled ydotool resolves to no tool at all,
- * while the paste
- * path still answers "yes" (it errors out rather than typing with something
- * else). Deriving it in the caller reintroduces that discrepancy.
+ * Deliberately a bool rather than the resolved tool name for the caller to
+ * compare: an explicitly configured but uninstalled ydotool resolves to no
+ * tool at all, while the paste path still answers "yes" (it errors out rather
+ * than typing with something else). Deriving it in the caller would
+ * reintroduce that discrepancy.
  */
 async directTypingUsesYdotool() : Promise<boolean> {
     return await TAURI_INVOKE("direct_typing_uses_ydotool");
