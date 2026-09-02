@@ -312,27 +312,17 @@ pub(crate) fn direct_typing_resolves_to_ydotool(preferred_tool: TypingTool) -> b
 /// Always includes "auto" as the first entry.
 #[cfg(target_os = "linux")]
 pub fn get_available_typing_tools() -> Vec<String> {
+    // Probes live, not cached: this drives the Typing Tool dropdown, and a tool
+    // installed while Handy is running must show up when Settings is reopened.
     let mut tools = vec!["auto".to_string()];
-    if is_wtype_available() {
-        tools.push("wtype".to_string());
-    }
-    if is_kwtype_available() {
-        tools.push("kwtype".to_string());
-    }
-    if is_dotool_available() {
-        tools.push("dotool".to_string());
-    }
-    if is_ydotool_available() {
-        tools.push("ydotool".to_string());
-    }
-    if is_xdotool_available() {
-        tools.push("xdotool".to_string());
+    for tool in ["wtype", "kwtype", "dotool", "ydotool", "xdotool"] {
+        if tool_installed_now(tool) {
+            tools.push(tool.to_string());
+        }
     }
     tools
 }
 
-/// Check if wtype is available (Wayland text input tool)
-#[cfg(target_os = "linux")]
 /// Whether wtype can actually drive this session.
 ///
 /// wtype needs `zwp_virtual_keyboard_manager_v1`, which neither KDE nor
@@ -347,6 +337,17 @@ fn wtype_usable() -> bool {
     !is_kde_wayland() && !is_gnome_wayland() && is_wtype_available()
 }
 
+/// `which <tool>`, uncached. Only for the settings listing — see
+/// [`tool_available`] for why the paste path caches and this does not.
+#[cfg(target_os = "linux")]
+fn tool_installed_now(tool: &str) -> bool {
+    Command::new("which")
+        .arg(tool)
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
 /// `which <tool>`, cached for the process lifetime.
 ///
 /// Each probe is a fork+exec+PATH scan, and the paste path walks the tool
@@ -355,20 +356,19 @@ fn wtype_usable() -> bool {
 /// ~9 subprocess spawns per non-ASCII transcription on the latency-visible
 /// path between "user stopped talking" and "text appears".
 ///
-/// Caching for the session is safe: installing a typing tool needs a restart
-/// to be usable anyway (ydotool additionally needs its daemon and an input
-/// group change that only takes effect on re-login).
+/// Caching is scoped to the paste path on purpose. The settings UI's gate asks
+/// which tool the paste path *would* use, so it must see the same cached answer
+/// or the two disagree. What must NOT be cached is the "which tools exist"
+/// listing behind the Typing Tool dropdown: a user who installs a tool, reopens
+/// Settings and still does not see it has no way to tell that a restart is what
+/// is missing. `get_available_typing_tools` therefore probes live.
 #[cfg(target_os = "linux")]
 fn tool_available(tool: &str, cache: &'static OnceLock<bool>) -> bool {
-    *cache.get_or_init(|| {
-        Command::new("which")
-            .arg(tool)
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
-    })
+    *cache.get_or_init(|| tool_installed_now(tool))
 }
 
+/// Check if wtype is available (Wayland text input tool)
+#[cfg(target_os = "linux")]
 fn is_wtype_available() -> bool {
     static CACHE: OnceLock<bool> = OnceLock::new();
     tool_available("wtype", &CACHE)

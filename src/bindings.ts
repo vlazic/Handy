@@ -176,18 +176,19 @@ async changePasteMethodSetting(method: string) : Promise<Result<null, string>> {
 async getAvailableTypingTools() : Promise<string[]> {
     return await TAURI_INVOKE("get_available_typing_tools");
 },
-async getResolvedTypingTool() : Promise<string | null> {
-    return await TAURI_INVOKE("get_resolved_typing_tool");
-},
 /**
  * Returns the typing tool direct typing would actually use right now, given the
  * configured `typing_tool` plus this machine's display server and installed
  * tools. `None` means direct typing would fall back to enigo, or that the
  * explicitly configured tool is not installed.
  * 
- * This exists so the settings UI never re-implements the selection chain: the
- * typing-key-delay slider used to guess it in TypeScript and got it wrong on a
- * Wayland machine that happened to have xdotool installed.
+ * Kept as a debug affordance: the settings UI asks `direct_typing_uses_ydotool`
+ * instead, because that is the predicate the paste path actually applies.
+ */
+async getResolvedTypingTool() : Promise<string | null> {
+    return await TAURI_INVOKE("get_resolved_typing_tool");
+},
+/**
  * Whether direct typing would go through ydotool, which cannot type non-ASCII
  * text. This is the exact predicate the paste path uses to decide whether a
  * transcription detours through the clipboard, so the settings UI must ask

@@ -37,9 +37,11 @@ upstream.
   `--key-delay` and `--key-hold` to 20ms, so an OS upgrade roughly halved
   dictation speed to about 25 characters per second with nothing in the logs
   to say why. Unrelated to Paste Delay, which paces the clipboard path.
-- **`get_resolved_typing_tool` / `direct_typing_uses_ydotool` commands
-  (Linux)**: report, respectively, the tool direct typing would actually use
-  right now, and whether that tool is ydotool — both from the single
+- **`direct_typing_uses_ydotool` command (Linux)**, with
+  `get_resolved_typing_tool` kept alongside it as a debug affordance: they
+  report, respectively, whether direct typing would go through ydotool (what
+  the settings UI asks) and which tool it would use (nothing calls this from
+  the UI) — both from the single
   `resolve_direct_typing_tool` chain in `clipboard.rs` that also drives
   `try_direct_typing_linux`. They exist so the settings UI never re-implements
   that chain. It did, twice: the Typing Key Delay slider first shipped with a
