@@ -21,9 +21,17 @@ async resetBinding(id: string) : Promise<Result<BindingResponse, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async changePttSetting(enabled: boolean) : Promise<Result<null, string>> {
+async changeShortcutActivationSetting(activation: ShortcutActivation) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_ptt_setting", { enabled }) };
+    return { status: "ok", data: await TAURI_INVOKE("change_shortcut_activation_setting", { activation }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeHoldThresholdMsSetting(ms: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_hold_threshold_ms_setting", { ms }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -168,6 +176,16 @@ async changePasteMethodSetting(method: string) : Promise<Result<null, string>> {
 async getAvailableTypingTools() : Promise<string[]> {
     return await TAURI_INVOKE("get_available_typing_tools");
 },
+/**
+ * Returns the typing tool direct typing would actually use right now, given the
+ * configured `typing_tool` plus this machine's display server and installed
+ * tools. `None` means direct typing would fall back to enigo, or that the
+ * explicitly configured tool is not installed.
+ * 
+ * This exists so the settings UI never re-implements the selection chain: the
+ * typing-key-delay slider used to guess it in TypeScript and got it wrong on a
+ * Wayland machine that happened to have xdotool installed.
+ */
 async getResolvedTypingTool() : Promise<string | null> {
     return await TAURI_INVOKE("get_resolved_typing_tool");
 },
@@ -410,6 +428,14 @@ async changeVadEnabledSetting(enabled: boolean) : Promise<Result<null, string>> 
     else return { status: "error", error: e  as any };
 }
 },
+async changeVadBackendSetting(backend: VadBackend) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_vad_backend_setting", { backend }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeFillerWordRemovalEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_filler_word_removal_enabled_setting", { enabled }) };
@@ -567,6 +593,9 @@ async cancelOperation() : Promise<void> {
 },
 async isPortable() : Promise<boolean> {
     return await TAURI_INVOKE("is_portable");
+},
+async isUpdateChecksLocked() : Promise<boolean> {
+    return await TAURI_INVOKE("is_update_checks_locked");
 },
 async getAppDirPath() : Promise<Result<string, string>> {
     try {
@@ -990,7 +1019,17 @@ settings_schema_version?: number;
  * Defaults to empty on partial stores; the load path merges in the
  * default bindings for any missing keys before the settings are used.
  */
-bindings?: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk?: boolean; audio_feedback?: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; show_whats_new_on_update?: boolean; 
+bindings?: Partial<{ [key in string]: ShortcutBinding }>; 
+/**
+ * Replaces the pre-0.10 `push_to_talk` bool; stores missing this key are
+ * migrated from it in `apply_settings_migrations`.
+ */
+shortcut_activation?: ShortcutActivation; 
+/**
+ * Hold-or-toggle only: a press held at least this long is push-to-talk,
+ * anything shorter is a tap that locks recording on.
+ */
+hold_threshold_ms?: number; audio_feedback?: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; show_whats_new_on_update?: boolean; 
 /**
  * The app version whose What's New the user has already seen. Fresh installs
  * default to the current version (nothing is "new" to them). Existing users
@@ -1008,18 +1047,18 @@ selected_channel?: number | null; clamshell_microphone?: string | null; selected
  * build) carries `update_checks_enabled: true`; the first fork run turns
  * checks off once and sets this, so the user's own later choice sticks.
  */
-fork_update_checks_migrated?: boolean; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean;
+fork_update_checks_migrated?: boolean; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; 
 /**
  * Per-key pacing for the DIRECT typing path via ydotool, in milliseconds.
  * Passed as both `--key-delay` (gap between keys) and `--key-hold` (how long
  * each key is held), so the real cost per character is roughly twice this.
- *
+ * 
  * WHY THIS EXISTS: ydotool 1.0.x defaults to 20 ms for BOTH, i.e. ~40 ms per
  * character or ~25 chars/sec, and Handy never overrode them. ydotool 0.1.8 -
  * what Ubuntu 24.04 shipped - had no `--key-hold` at all, so upgrading to
  * 26.04 silently halved dictation speed. Measured on that upgrade: a
  * 300-character transcription went from prompt to about twelve seconds.
- *
+ * 
  * Not the same thing as `paste_delay_ms` below, which is clipboard-path only.
  */
 typing_key_delay_ms?: number; paste_delay_ms?: number; paste_delay_after_ms?: number; 
@@ -1043,6 +1082,10 @@ non_ascii_fallback_paste_method?: PasteMethod; external_script_path?: string | n
  * never from the process-local device registry index.
  */
 transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number; vad_enabled?: boolean; 
+/**
+ * Experimental detector implementation. Silero remains the stable default.
+ */
+vad_backend?: VadBackend; 
 /**
  * Which recording overlay to show: None / Minimal / Live. Streaming mode is
  * not gated on this — that follows model capability. Migrated from the old
@@ -1165,6 +1208,24 @@ uncovered_bindings: string[];
  * warning banner appears and explains why recording refused.
  */
 recorder_blocked: boolean }
+/**
+ * How the transcribe shortcut's key events drive a recording.
+ */
+export type ShortcutActivation = 
+/**
+ * Press to start, press again to stop.
+ */
+"toggle" | 
+/**
+ * Hold to record, release to stop.
+ */
+"push_to_talk" | 
+/**
+ * Hold to record and release to stop, or tap to keep recording until the
+ * next press. Which one it was is decided by how long the key was held
+ * (`hold_threshold_ms`).
+ */
+"hold_or_toggle"
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
 /**
@@ -1215,6 +1276,7 @@ models?: string[] }
 export type Theme = "system" | "light" | "dark"
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
+export type VadBackend = "silero" | "earshot"
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 
 /** tauri-specta globals **/
