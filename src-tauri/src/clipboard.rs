@@ -167,7 +167,7 @@ fn try_send_key_combo_linux(paste_method: &PasteMethod) -> Result<bool, String> 
 /// candidate and the caller should fall back to enigo.
 ///
 /// [`try_direct_typing_linux`] is the only consumer that types; everything else
-/// (the ydotool non-ASCII guard, the `get_resolved_typing_tool` command the
+/// (the ydotool non-ASCII guard, the `direct_typing_uses_ydotool` command the
 /// settings UI asks) must call this rather than re-implement the order. A
 /// frontend copy of this chain is exactly what hid the typing-key-delay slider.
 #[cfg(target_os = "linux")]
@@ -316,7 +316,7 @@ pub fn get_available_typing_tools() -> Vec<String> {
     // installed while Handy is running must show up when Settings is reopened.
     let mut tools = vec!["auto".to_string()];
     for tool in ["wtype", "kwtype", "dotool", "ydotool", "xdotool"] {
-        if tool_installed_now(tool) {
+        if tool_installed(tool) {
             tools.push(tool.to_string());
         }
     }
@@ -337,48 +337,39 @@ fn wtype_usable() -> bool {
     !is_kde_wayland() && !is_gnome_wayland() && is_wtype_available()
 }
 
-/// `which <tool>`, uncached. Only for the settings listing — see
-/// [`tool_available`] for why the paste path caches and this does not.
+/// Whether `tool` is an executable on `$PATH`.
+///
+/// Done in-process rather than by spawning `which`: the paste path walks the
+/// tool cascade twice per dictation, which cost ~9 subprocess spawns per
+/// non-ASCII transcription on the latency-visible path between "user stopped
+/// talking" and "text appears". A `$PATH` scan is microseconds, so it needs no
+/// cache — and not caching is what keeps the settings dropdown and the paste
+/// path from disagreeing about which tools exist.
 #[cfg(target_os = "linux")]
-fn tool_installed_now(tool: &str) -> bool {
-    Command::new("which")
-        .arg(tool)
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-}
+fn tool_installed(tool: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt;
 
-/// `which <tool>`, cached for the process lifetime.
-///
-/// Each probe is a fork+exec+PATH scan, and the paste path walks the tool
-/// cascade twice per dictation (once to decide whether typing resolves to
-/// ydotool, once to actually send the chord), so an uncached probe costs
-/// ~9 subprocess spawns per non-ASCII transcription on the latency-visible
-/// path between "user stopped talking" and "text appears".
-///
-/// Caching is scoped to the paste path on purpose. The settings UI's gate asks
-/// which tool the paste path *would* use, so it must see the same cached answer
-/// or the two disagree. What must NOT be cached is the "which tools exist"
-/// listing behind the Typing Tool dropdown: a user who installs a tool, reopens
-/// Settings and still does not see it has no way to tell that a restart is what
-/// is missing. `get_available_typing_tools` therefore probes live.
-#[cfg(target_os = "linux")]
-fn tool_available(tool: &str, cache: &'static OnceLock<bool>) -> bool {
-    *cache.get_or_init(|| tool_installed_now(tool))
+    std::env::var_os("PATH")
+        .map(|path| {
+            std::env::split_paths(&path).any(|dir| {
+                std::fs::metadata(dir.join(tool))
+                    .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
 }
 
 /// Check if wtype is available (Wayland text input tool)
 #[cfg(target_os = "linux")]
 fn is_wtype_available() -> bool {
-    static CACHE: OnceLock<bool> = OnceLock::new();
-    tool_available("wtype", &CACHE)
+    tool_installed("wtype")
 }
 
 /// Check if dotool is available (another Wayland text input tool)
 #[cfg(target_os = "linux")]
 fn is_dotool_available() -> bool {
-    static CACHE: OnceLock<bool> = OnceLock::new();
-    tool_available("dotool", &CACHE)
+    tool_installed("dotool")
 }
 
 #[cfg(target_os = "linux")]
@@ -458,28 +449,24 @@ fn detect_ydotool_key_syntax() -> YdotoolKeySyntax {
 /// Check if ydotool is available (uinput-based, works on both Wayland and X11)
 #[cfg(target_os = "linux")]
 fn is_ydotool_available() -> bool {
-    static CACHE: OnceLock<bool> = OnceLock::new();
-    tool_available("ydotool", &CACHE)
+    tool_installed("ydotool")
 }
 
 #[cfg(target_os = "linux")]
 fn is_xdotool_available() -> bool {
-    static CACHE: OnceLock<bool> = OnceLock::new();
-    tool_available("xdotool", &CACHE)
+    tool_installed("xdotool")
 }
 
 /// Check if kwtype is available (KDE Wayland virtual keyboard input tool)
 #[cfg(target_os = "linux")]
 fn is_kwtype_available() -> bool {
-    static CACHE: OnceLock<bool> = OnceLock::new();
-    tool_available("kwtype", &CACHE)
+    tool_installed("kwtype")
 }
 
 /// Check if wl-copy is available (Wayland clipboard tool)
 #[cfg(target_os = "linux")]
 fn is_wl_copy_available() -> bool {
-    static CACHE: OnceLock<bool> = OnceLock::new();
-    tool_available("wl-copy", &CACHE)
+    tool_installed("wl-copy")
 }
 
 /// Type text directly via wtype on Wayland.

@@ -923,8 +923,9 @@ pub fn get_available_typing_tools() -> Vec<String> {
 /// transcription detours through the clipboard, so the settings UI must ask
 /// this rather than derive it from the tool name.
 ///
-/// Deliberately NOT `get_resolved_typing_tool(..) == "ydotool"`: an explicitly
-/// configured but uninstalled ydotool resolves to `None` there, while the paste
+/// Deliberately a bool, not the resolved tool name for the caller to compare:
+/// an explicitly configured but uninstalled ydotool resolves to no tool at all,
+/// while the paste
 /// path still answers "yes" (it errors out rather than typing with something
 /// else). Deriving it in the caller reintroduces that discrepancy.
 #[tauri::command]
@@ -939,28 +940,6 @@ pub fn direct_typing_uses_ydotool(app: AppHandle) -> bool {
     {
         let _ = app;
         false
-    }
-}
-
-/// Returns the typing tool direct typing would actually use right now, given the
-/// configured `typing_tool` plus this machine's display server and installed
-/// tools. `None` means direct typing would fall back to enigo, or that the
-/// explicitly configured tool is not installed.
-///
-/// Kept as a debug affordance: the settings UI asks `direct_typing_uses_ydotool`
-/// instead, because that is the predicate the paste path actually applies.
-#[tauri::command]
-#[specta::specta]
-pub fn get_resolved_typing_tool(app: AppHandle) -> Option<String> {
-    #[cfg(target_os = "linux")]
-    {
-        let settings = settings::get_settings(&app);
-        crate::clipboard::resolve_direct_typing_tool(settings.typing_tool)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = app;
-        None
     }
 }
 

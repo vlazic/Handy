@@ -37,14 +37,11 @@ upstream.
   `--key-delay` and `--key-hold` to 20ms, so an OS upgrade roughly halved
   dictation speed to about 25 characters per second with nothing in the logs
   to say why. Unrelated to Paste Delay, which paces the clipboard path.
-- **`direct_typing_uses_ydotool` command (Linux)**, with
-  `get_resolved_typing_tool` kept alongside it as a debug affordance: they
-  report, respectively, whether direct typing would go through ydotool (what
-  the settings UI asks) and which tool it would use (nothing calls this from
-  the UI) — both from the single
+- **`direct_typing_uses_ydotool` command (Linux)**: reports whether direct
+  typing would go through ydotool, from the single
   `resolve_direct_typing_tool` chain in `clipboard.rs` that also drives
-  `try_direct_typing_linux`. They exist so the settings UI never re-implements
-  that chain. It did, twice: the Typing Key Delay slider first shipped with a
+  `try_direct_typing_linux`. It exists so the settings UI never re-implements
+  that chain. The UI did, twice: the Typing Key Delay slider first shipped with a
   TypeScript copy of the fallback order that counted xdotool as preferred over
   ydotool, so the slider never appeared on a Wayland machine that happened to
   have xdotool installed (xdotool is only ever used on X11); the Non-ASCII
@@ -53,10 +50,10 @@ upstream.
   call `direct_typing_uses_ydotool` through one shared
   `useYdotoolTypingActive` hook. Ask; never re-derive.
 
-  `direct_typing_uses_ydotool` is deliberately not
-  `get_resolved_typing_tool() == "ydotool"`: an explicitly configured but
-  uninstalled ydotool resolves to `None` there, while the paste path still
-  answers yes. Deriving it in the caller reintroduces that discrepancy.
+  It deliberately returns a bool rather than the resolved tool name for the
+  caller to compare: an explicitly configured but uninstalled ydotool resolves
+  to no tool at all, while the paste path still answers yes. Deriving the
+  answer in the caller reintroduces that discrepancy.
 
 - **Updater neutralized**, in three layers: the updater **pubkey is the
   fork's own** minisign key (upstream artifacts can never pass signature
