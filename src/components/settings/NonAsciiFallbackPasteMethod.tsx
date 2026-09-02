@@ -1,10 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { useTranslation } from "react-i18next";
 import { Dropdown } from "../ui/Dropdown";
 import { SettingContainer } from "../ui/SettingContainer";
 import { useSettings } from "../../hooks/useSettings";
-import { useOsType } from "../../hooks/useOsType";
-import { commands } from "@/bindings";
+import { useYdotoolTypingActive } from "../../hooks/useYdotoolTypingActive";
 import type { PasteMethod } from "@/bindings";
 
 interface NonAsciiFallbackPasteMethodProps {
@@ -16,49 +15,11 @@ export const NonAsciiFallbackPasteMethodSetting: React.FC<NonAsciiFallbackPasteM
   React.memo(({ descriptionMode = "tooltip", grouped = false }) => {
     const { t } = useTranslation();
     const { getSetting, updateSetting, isUpdating } = useSettings();
-    const osType = useOsType();
-    const [resolvesToYdotool, setResolvesToYdotool] = useState(false);
 
-    const typingTool = getSetting("typing_tool") || "auto";
-
-    // ydotool is the only typing tool that cannot type non-ASCII text, so this
-    // setting is meaningless unless the current configuration resolves to it.
-    useEffect(() => {
-      if (osType !== "linux") return;
-      commands
-        .getAvailableTypingTools()
-        .then((tools) => {
-          if (typingTool === "ydotool") {
-            setResolvesToYdotool(tools.includes("ydotool"));
-            return;
-          }
-          if (typingTool !== "auto") {
-            setResolvesToYdotool(false);
-            return;
-          }
-          // Auto mode falls through the other tools first; if none of them are
-          // installed, non-ASCII transcripts take the clipboard detour.
-          const unicodeCapable = ["wtype", "kwtype", "dotool", "xdotool"];
-          setResolvesToYdotool(
-            tools.includes("ydotool") &&
-              !unicodeCapable.some((tool) => tools.includes(tool)),
-          );
-        })
-        .catch(() => {
-          setResolvesToYdotool(false);
-        });
-    }, [osType, typingTool]);
-
-    if (osType !== "linux") {
-      return null;
-    }
-
-    // Only the "direct" paste method has the non-ASCII fallback branch.
-    if (getSetting("paste_method") !== "direct") {
-      return null;
-    }
-
-    if (!resolvesToYdotool) {
+    // ydotool cannot type non-ASCII, so only then does a transcription detour
+    // through the clipboard and need a paste chord at all.
+    const active = useYdotoolTypingActive();
+    if (!active) {
       return null;
     }
 

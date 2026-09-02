@@ -1349,11 +1349,7 @@ impl TranscriptionManager {
             real_time_factor(audio_secs, elapsed_secs)
         );
 
-        if filtered.is_empty() {
-            info!("Transcription result is empty");
-        } else {
-            info!("Transcription result: {}", filtered);
-        }
+        log_transcription_result(&filtered);
 
         Ok(filtered)
     }
@@ -1705,14 +1701,7 @@ impl TranscriptionManager {
 
         let final_result = filtered_result;
 
-        if final_result.is_empty() {
-            info!("Transcription result is empty");
-        } else {
-            info!(
-                "Transcription result: {}",
-                crate::utils::redact_text(&final_result)
-            );
-        }
+        log_transcription_result(&final_result);
 
         self.maybe_unload_immediately("transcription");
 
@@ -1831,6 +1820,21 @@ fn real_time_factor(audio_secs: f64, compute_secs: f64) -> f64 {
         audio_secs / compute_secs
     } else {
         0.0
+    }
+}
+
+/// The single place a transcript reaches the log.
+///
+/// Both the local and the cloud path used to carry their own copy of this
+/// block, and they drifted: upstream added `redact_text` to the local one and
+/// the fork-only cloud copy kept logging transcripts verbatim, so release
+/// builds leaked every dictated sentence when a cloud model was selected.
+/// Keep this the only caller of `redact_text` for transcript text.
+fn log_transcription_result(text: &str) {
+    if text.is_empty() {
+        info!("Transcription result is empty");
+    } else {
+        info!("Transcription result: {}", crate::utils::redact_text(text));
     }
 }
 

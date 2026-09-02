@@ -126,7 +126,7 @@ fn try_send_key_combo_linux(paste_method: &PasteMethod) -> Result<bool, String> 
         // Note: wtype doesn't work on KDE (no zwp_virtual_keyboard_manager_v1 support)
         // or on GNOME/Mutter (same reason — Mutter deliberately does not implement
         // the virtual-keyboard-v1 protocol).
-        if !is_kde_wayland() && !is_gnome_wayland() && is_wtype_available() {
+        if wtype_usable() {
             info!("Using wtype for key combo");
             send_key_combo_via_wtype(paste_method)?;
             return Ok(true);
@@ -190,15 +190,10 @@ pub fn resolve_direct_typing_tool(preferred: TypingTool) -> Option<String> {
         if is_kde_wayland() && is_kwtype_available() {
             return Some("kwtype".to_string());
         }
-        // Wayland: prefer wtype, then dotool, then ydotool
-        // Note: wtype doesn't work on KDE (no zwp_virtual_keyboard_manager_v1 support)
-        // or on GNOME/Mutter (same reason — Mutter deliberately does not implement
-        // the virtual-keyboard-v1 protocol). This guard MUST mirror the one in
-        // `try_send_key_combo_linux`/`try_direct_typing_linux`: this function is what
-        // `direct_typing_resolves_to_ydotool` consults, so if it claims wtype while
-        // the cascade actually falls through to ydotool, non-ASCII transcriptions
-        // take the direct-typing path and get truncated at the first diacritic.
-        if !is_kde_wayland() && !is_gnome_wayland() && is_wtype_available() {
+        // Wayland: prefer wtype, then dotool, then ydotool.
+        // The compositor guard lives in `wtype_usable`, shared with the chord
+        // cascade — see there for why the two must not diverge.
+        if wtype_usable() {
             return Some("wtype".to_string());
         }
         if is_dotool_available() {
@@ -303,7 +298,7 @@ fn non_ascii_fallback_chord(configured: PasteMethod) -> PasteMethod {
 /// "funkcioni". Defers to [`resolve_direct_typing_tool`] rather than repeating
 /// the selection order.
 #[cfg(target_os = "linux")]
-fn direct_typing_resolves_to_ydotool(preferred_tool: TypingTool) -> bool {
+pub(crate) fn direct_typing_resolves_to_ydotool(preferred_tool: TypingTool) -> bool {
     match preferred_tool {
         // Explicitly configured ydotool stays "yes" even when it is not
         // installed: that case errors out in try_direct_typing_linux rather
@@ -338,22 +333,52 @@ pub fn get_available_typing_tools() -> Vec<String> {
 
 /// Check if wtype is available (Wayland text input tool)
 #[cfg(target_os = "linux")]
+/// Whether wtype can actually drive this session.
+///
+/// wtype needs `zwp_virtual_keyboard_manager_v1`, which neither KDE nor
+/// GNOME/Mutter implements. Both the chord cascade and the typing cascade must
+/// apply this identically: if they disagree, `direct_typing_resolves_to_ydotool`
+/// claims wtype while the cascade actually falls through to ydotool, and
+/// non-ASCII transcriptions get truncated at the first diacritic instead of
+/// being routed through the clipboard. That divergence was a real bug; keeping
+/// one definition is what prevents it, not the comment.
+#[cfg(target_os = "linux")]
+fn wtype_usable() -> bool {
+    !is_kde_wayland() && !is_gnome_wayland() && is_wtype_available()
+}
+
+/// `which <tool>`, cached for the process lifetime.
+///
+/// Each probe is a fork+exec+PATH scan, and the paste path walks the tool
+/// cascade twice per dictation (once to decide whether typing resolves to
+/// ydotool, once to actually send the chord), so an uncached probe costs
+/// ~9 subprocess spawns per non-ASCII transcription on the latency-visible
+/// path between "user stopped talking" and "text appears".
+///
+/// Caching for the session is safe: installing a typing tool needs a restart
+/// to be usable anyway (ydotool additionally needs its daemon and an input
+/// group change that only takes effect on re-login).
+#[cfg(target_os = "linux")]
+fn tool_available(tool: &str, cache: &'static OnceLock<bool>) -> bool {
+    *cache.get_or_init(|| {
+        Command::new("which")
+            .arg(tool)
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    })
+}
+
 fn is_wtype_available() -> bool {
-    Command::new("which")
-        .arg("wtype")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    tool_available("wtype", &CACHE)
 }
 
 /// Check if dotool is available (another Wayland text input tool)
 #[cfg(target_os = "linux")]
 fn is_dotool_available() -> bool {
-    Command::new("which")
-        .arg("dotool")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    tool_available("dotool", &CACHE)
 }
 
 #[cfg(target_os = "linux")]
@@ -433,40 +458,28 @@ fn detect_ydotool_key_syntax() -> YdotoolKeySyntax {
 /// Check if ydotool is available (uinput-based, works on both Wayland and X11)
 #[cfg(target_os = "linux")]
 fn is_ydotool_available() -> bool {
-    Command::new("which")
-        .arg("ydotool")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    tool_available("ydotool", &CACHE)
 }
 
 #[cfg(target_os = "linux")]
 fn is_xdotool_available() -> bool {
-    Command::new("which")
-        .arg("xdotool")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    tool_available("xdotool", &CACHE)
 }
 
 /// Check if kwtype is available (KDE Wayland virtual keyboard input tool)
 #[cfg(target_os = "linux")]
 fn is_kwtype_available() -> bool {
-    Command::new("which")
-        .arg("kwtype")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    tool_available("kwtype", &CACHE)
 }
 
 /// Check if wl-copy is available (Wayland clipboard tool)
 #[cfg(target_os = "linux")]
 fn is_wl_copy_available() -> bool {
-    Command::new("which")
-        .arg("wl-copy")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    tool_available("wl-copy", &CACHE)
 }
 
 /// Type text directly via wtype on Wayland.

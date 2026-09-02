@@ -674,6 +674,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_paste_method_setting,
             shortcut::get_available_typing_tools,
             shortcut::get_resolved_typing_tool,
+            shortcut::direct_typing_uses_ydotool,
             shortcut::change_typing_tool_setting,
             shortcut::change_non_ascii_fallback_paste_method_setting,
             shortcut::change_typing_key_delay_ms_setting,

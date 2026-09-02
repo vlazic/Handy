@@ -176,6 +176,9 @@ async changePasteMethodSetting(method: string) : Promise<Result<null, string>> {
 async getAvailableTypingTools() : Promise<string[]> {
     return await TAURI_INVOKE("get_available_typing_tools");
 },
+async getResolvedTypingTool() : Promise<string | null> {
+    return await TAURI_INVOKE("get_resolved_typing_tool");
+},
 /**
  * Returns the typing tool direct typing would actually use right now, given the
  * configured `typing_tool` plus this machine's display server and installed
@@ -185,9 +188,18 @@ async getAvailableTypingTools() : Promise<string[]> {
  * This exists so the settings UI never re-implements the selection chain: the
  * typing-key-delay slider used to guess it in TypeScript and got it wrong on a
  * Wayland machine that happened to have xdotool installed.
+ * Whether direct typing would go through ydotool, which cannot type non-ASCII
+ * text. This is the exact predicate the paste path uses to decide whether a
+ * transcription detours through the clipboard, so the settings UI must ask
+ * this rather than derive it from the tool name.
+ * 
+ * Deliberately NOT `get_resolved_typing_tool(..) == "ydotool"`: an explicitly
+ * configured but uninstalled ydotool resolves to `None` there, while the paste
+ * path still answers "yes" (it errors out rather than typing with something
+ * else). Deriving it in the caller reintroduces that discrepancy.
  */
-async getResolvedTypingTool() : Promise<string | null> {
-    return await TAURI_INVOKE("get_resolved_typing_tool");
+async directTypingUsesYdotool() : Promise<boolean> {
+    return await TAURI_INVOKE("direct_typing_uses_ydotool");
 },
 async changeTypingToolSetting(tool: string) : Promise<Result<null, string>> {
     try {

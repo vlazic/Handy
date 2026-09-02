@@ -1,9 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { useTranslation } from "react-i18next";
 import { Slider } from "../ui/Slider";
 import { useSettings } from "../../hooks/useSettings";
-import { useOsType } from "../../hooks/useOsType";
-import { commands } from "@/bindings";
+import { useYdotoolTypingActive } from "../../hooks/useYdotoolTypingActive";
 
 interface TypingKeyDelayProps {
   descriptionMode?: "inline" | "tooltip";
@@ -13,46 +12,12 @@ interface TypingKeyDelayProps {
 export const TypingKeyDelaySetting: React.FC<TypingKeyDelayProps> = React.memo(
   ({ descriptionMode = "tooltip", grouped = false }) => {
     const { t } = useTranslation();
-    const { settings, getSetting, updateSetting, resetSetting, isUpdating } =
-      useSettings();
-    const osType = useOsType();
-    const [resolvesToYdotool, setResolvesToYdotool] = useState(false);
+    const { settings, updateSetting, resetSetting, isUpdating } = useSettings();
 
-    const typingTool = getSetting("typing_tool") || "auto";
-
-    // Only ydotool is paced by this setting, so it is meaningless unless the
-    // current configuration resolves to it.
-    //
-    // The backend answers that question - `get_resolved_typing_tool` runs the
-    // same `resolve_direct_typing_tool` chain that actually picks the tool.
-    // This component used to re-implement that chain here, listing the tools
-    // "preferred over ydotool", and it was wrong: it treated xdotool as a
-    // preferred tool on every session, but xdotool is never used on Wayland.
-    // On a Wayland machine with only ydotool and xdotool installed the backend
-    // types with ydotool while this gate saw xdotool and hid the slider. Never
-    // reproduce the selection order in the frontend - ask.
-    useEffect(() => {
-      if (osType !== "linux") return;
-      commands
-        .getResolvedTypingTool()
-        .then((tool) => {
-          setResolvesToYdotool(tool === "ydotool");
-        })
-        .catch(() => {
-          setResolvesToYdotool(false);
-        });
-    }, [osType, typingTool]);
-
-    if (osType !== "linux") {
-      return null;
-    }
-
-    // Only the "direct" paste method types character by character.
-    if (getSetting("paste_method") !== "direct") {
-      return null;
-    }
-
-    if (!resolvesToYdotool) {
+    // Only ydotool is paced by this setting, so it is meaningless otherwise.
+    // The gate lives in the hook; never re-derive the selection chain here.
+    const active = useYdotoolTypingActive();
+    if (!active) {
       return null;
     }
 
